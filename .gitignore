@@ -49,3 +49,13 @@ qtcreator-*
 
 # Catkin custom files
 CATKIN_IGNORE
+
+# KiCad temporary/local files
+*.kicad_prl
+*.lck
+*-backups/
+fp-info-cache
+_autosave-*
+*.kicad_pro-bak
+*.kicad_sch-bak
+*.kicad_pcb-bak
