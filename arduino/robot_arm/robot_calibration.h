@@ -26,9 +26,9 @@ struct JointOffsets {
     float l5_m;
 };
 
-constexpr float JOINT_ANGLE_MIN_RAD = -1.04719755120f;
+constexpr float JOINT_ANGLE_MIN_RAD = -1.57f;
 constexpr float JOINT_ANGLE_ZERO_RAD = 0.0f;
-constexpr float JOINT_ANGLE_MAX_RAD = 1.04719755120f;
+constexpr float JOINT_ANGLE_MAX_RAD = 1.57f;
 
 const JointCalibration JOINT_CALIBRATIONS[ROBOT_TOTAL_JOINT_COUNT] = {
     {0, 600, 1500, 2400, JOINT_ANGLE_MIN_RAD, JOINT_ANGLE_ZERO_RAD, JOINT_ANGLE_MAX_RAD},

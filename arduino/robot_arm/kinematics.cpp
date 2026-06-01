@@ -34,7 +34,7 @@ bool isValidPose(const TcpPose &pose) {
     return isFiniteFloat(pose.position.x_m) &&
            isFiniteFloat(pose.position.y_m) &&
            isFiniteFloat(pose.position.z_m) &&
-           isFiniteFloat(pose.yaw_rad);
+           isFiniteFloat(pose.tool_roll_rad);
 }
 
 float normalizeAngleRad(float angle_rad) {
@@ -194,13 +194,13 @@ bool buildIkCandidate(
     const float j1_rad =
         target_r_m <= IK_EPSILON_M ? 0.0f : atan2(target_pose.position.y_m, target_pose.position.x_m);
     const float j4_rad = normalizeAngleRad(tool_pitch_rad - j2_rad - j3_rad);
-    const float j5_rad = normalizeAngleRad(target_pose.yaw_rad - j1_rad);
+    const float j5_rad = normalizeAngleRad(target_pose.tool_roll_rad);
 
     candidate = {j1_rad, j2_rad, j3_rad, j4_rad, j5_rad};
     return isValidAngles(candidate);
 }
 
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionToolRollInternal(
     const TcpPose &target_pose,
     const ArmJointAngles *seed_angles,
     const JointOffsets &offsets) {
@@ -338,19 +338,19 @@ KinematicsResult<TcpPose> forwardKinematics(
             reach_m * sin(angles.j1_rad),
             z_m,
         },
-        normalizeAngleRad(angles.j1_rad + angles.j5_rad),
+        normalizeAngleRad(angles.j5_rad),
     };
 
     return {KinematicsStatus::Ok, pose};
 }
 
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionYaw(
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionToolRoll(
     const TcpPose &target_pose,
     const JointOffsets &offsets) {
-    return inverseKinematicsPositionYawInternal(target_pose, nullptr, offsets);
+    return inverseKinematicsPositionToolRollInternal(target_pose, nullptr, offsets);
 }
 
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawSeeded(
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionToolRollSeeded(
     const TcpPose &target_pose,
     const ArmJointAngles &seed_angles,
     const JointOffsets &offsets) {
@@ -358,7 +358,7 @@ KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawSeeded(
         return {KinematicsStatus::InvalidInput, emptyAngles()};
     }
 
-    return inverseKinematicsPositionYawInternal(target_pose, &seed_angles, offsets);
+    return inverseKinematicsPositionToolRollInternal(target_pose, &seed_angles, offsets);
 }
 
 KinematicsResult<uint16_t> jointAngleToPwmUs(

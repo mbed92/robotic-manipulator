@@ -48,11 +48,11 @@ void setup() {
         printFkZeroTest(fk_zero.value);
     }
 
-    const ArmJointAngles yaw_angles = {0.25f, 0.0f, 0.0f, 0.0f, 0.50f};
-    const KinematicsResult<TcpPose> fk_yaw = forwardKinematics(yaw_angles);
-    printStatus("FK yaw", fk_yaw.status);
-    if (fk_yaw.status == KinematicsStatus::Ok) {
-        printPose(fk_yaw.value);
+    const ArmJointAngles tool_roll_angles = {0.25f, 0.0f, 0.0f, 0.0f, 0.50f};
+    const KinematicsResult<TcpPose> fk_tool_roll = forwardKinematics(tool_roll_angles);
+    printStatus("FK tool roll", fk_tool_roll.status);
+    if (fk_tool_roll.status == KinematicsStatus::Ok) {
+        printPose(fk_tool_roll.value);
     }
 
     const KinematicsResult<ArmJointPwmUs> zero_pwm = jointAnglesToPwmUs(zero_angles);
@@ -69,8 +69,8 @@ void setup() {
     printStatus("PWM limit", out_of_limit_pwm.status);
 
     const KinematicsResult<ArmJointAngles> ik_result =
-        inverseKinematicsPositionYaw(fk_zero.value);
-    printStatus("IK position yaw", ik_result.status);
+        inverseKinematicsPositionToolRoll(fk_zero.value);
+    printStatus("IK position tool roll", ik_result.status);
 
     runIkStaticTests();
     runTrajectoryTest();
@@ -92,8 +92,8 @@ void printPose(const TcpPose &pose) {
     Serial.print(pose.position.y_m, 6);
     Serial.print(" z_m=");
     Serial.print(pose.position.z_m, 6);
-    Serial.print(" yaw_rad=");
-    Serial.println(pose.yaw_rad, 6);
+    Serial.print(" tool_roll_rad=");
+    Serial.println(pose.tool_roll_rad, 6);
 }
 
 void printAngles(const ArmJointAngles &angles) {
@@ -134,7 +134,7 @@ void runIkStaticTests() {
         {0.35f, 0.25f, -0.35f, 0.20f, 0.10f},
         true);
     runIkRoundTripTest(
-        "IK yaw reconstruction",
+        "IK tool roll reconstruction",
         {0.20f, 0.20f, -0.30f, 0.15f, 0.45f},
         true);
 
@@ -172,8 +172,8 @@ void runIkPoseTest(
     const ArmJointAngles *seed_angles) {
     const KinematicsResult<ArmJointAngles> ik_result =
         seed_angles == nullptr
-            ? inverseKinematicsPositionYaw(target_pose)
-            : inverseKinematicsPositionYawSeeded(target_pose, *seed_angles);
+            ? inverseKinematicsPositionToolRoll(target_pose)
+            : inverseKinematicsPositionToolRollSeeded(target_pose, *seed_angles);
 
     Serial.print(label);
     Serial.print(" ik_status=");
@@ -200,14 +200,14 @@ void runIkPoseTest(
 
     const float pos_error_m =
         positionErrorM(fk_result.value.position, target_pose.position);
-    const float yaw_error_rad =
-        fabs(angleDistanceRad(fk_result.value.yaw_rad, target_pose.yaw_rad));
-    const bool passed = pos_error_m <= 0.005f && yaw_error_rad <= 0.03f;
+    const float tool_roll_error_rad =
+        fabs(angleDistanceRad(fk_result.value.tool_roll_rad, target_pose.tool_roll_rad));
+    const bool passed = pos_error_m <= 0.005f && tool_roll_error_rad <= 0.03f;
 
     Serial.print(" pos_error_m=");
     Serial.print(pos_error_m, 6);
-    Serial.print(" yaw_error_rad=");
-    Serial.print(yaw_error_rad, 6);
+    Serial.print(" tool_roll_error_rad=");
+    Serial.print(tool_roll_error_rad, 6);
     Serial.print(" result=");
     Serial.println(passed ? "PASS" : "FAIL");
     printPose(target_pose);
@@ -237,8 +237,8 @@ void runTrajectoryTest() {
         const TcpPose target_pose = interpolatePose(start_fk.value, end_fk.value, alpha);
         const KinematicsResult<ArmJointAngles> ik_result =
             has_previous
-                ? inverseKinematicsPositionYawSeeded(target_pose, previous_angles)
-                : inverseKinematicsPositionYaw(target_pose);
+                ? inverseKinematicsPositionToolRollSeeded(target_pose, previous_angles)
+                : inverseKinematicsPositionToolRoll(target_pose);
 
         Serial.print("Trajectory sample ");
         Serial.print(i);
@@ -256,9 +256,9 @@ void runTrajectoryTest() {
             fk_result.status == KinematicsStatus::Ok
                 ? positionErrorM(fk_result.value.position, target_pose.position)
                 : 999.0f;
-        const float yaw_error_rad =
+        const float tool_roll_error_rad =
             fk_result.status == KinematicsStatus::Ok
-                ? fabs(angleDistanceRad(fk_result.value.yaw_rad, target_pose.yaw_rad))
+                ? fabs(angleDistanceRad(fk_result.value.tool_roll_rad, target_pose.tool_roll_rad))
                 : 999.0f;
         const float delta_rad =
             has_previous ? maxJointDeltaRad(ik_result.value, previous_angles) : 0.0f;
@@ -270,14 +270,14 @@ void runTrajectoryTest() {
         const bool sample_passed =
             fk_result.status == KinematicsStatus::Ok &&
             pos_error_m <= 0.005f &&
-            yaw_error_rad <= 0.03f &&
+            tool_roll_error_rad <= 0.03f &&
             (!has_previous || delta_rad <= 0.35f);
         passed = passed && sample_passed;
 
         Serial.print(" pos_error_m=");
         Serial.print(pos_error_m, 6);
-        Serial.print(" yaw_error_rad=");
-        Serial.print(yaw_error_rad, 6);
+        Serial.print(" tool_roll_error_rad=");
+        Serial.print(tool_roll_error_rad, 6);
         Serial.print(" max_joint_delta_rad=");
         Serial.print(delta_rad, 6);
         Serial.print(" result=");
@@ -294,7 +294,7 @@ void runTrajectoryTest() {
 }
 
 TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, float alpha) {
-    const float yaw_delta_rad = angleDistanceRad(end_pose.yaw_rad, start_pose.yaw_rad);
+    const float tool_roll_delta_rad = angleDistanceRad(end_pose.tool_roll_rad, start_pose.tool_roll_rad);
     return {
         {
             start_pose.position.x_m +
@@ -304,7 +304,7 @@ TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, floa
             start_pose.position.z_m +
                 alpha * (end_pose.position.z_m - start_pose.position.z_m),
         },
-        start_pose.yaw_rad + alpha * yaw_delta_rad,
+        start_pose.tool_roll_rad + alpha * tool_roll_delta_rad,
     };
 }
 
@@ -360,11 +360,11 @@ void printFkZeroTest(const TcpPose &pose) {
         fabs(pose.position.x_m) <= tolerance_m &&
         fabs(pose.position.y_m) <= tolerance_m &&
         fabs(pose.position.z_m - expected_z_m) <= tolerance_m &&
-        fabs(pose.yaw_rad) <= tolerance_m;
+        fabs(pose.tool_roll_rad) <= tolerance_m;
 
     Serial.print("FK zero expected x_m=0.000000 y_m=0.000000 z_m=");
     Serial.print(expected_z_m, 6);
-    Serial.print(" yaw_rad=0.000000 result=");
+    Serial.print(" tool_roll_rad=0.000000 result=");
     Serial.println(passed ? "PASS" : "FAIL");
 }
 

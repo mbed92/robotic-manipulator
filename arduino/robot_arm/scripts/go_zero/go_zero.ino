@@ -12,7 +12,7 @@
 
 constexpr float ZERO_ANGLE_TOLERANCE_RAD = 0.000001f;
 constexpr float ZERO_FK_POSITION_TOLERANCE_M = 0.000001f;
-constexpr float ZERO_FK_YAW_TOLERANCE_RAD = 0.000001f;
+constexpr float ZERO_FK_TOOL_ROLL_TOLERANCE_RAD = 0.000001f;
 
 Pca9685ServoDriver servo_driver;
 
@@ -66,7 +66,7 @@ void setup() {
         }
 
         const KinematicsResult<ArmJointAngles> ik_result =
-            inverseKinematicsPositionYaw(fk_result.value);
+            inverseKinematicsPositionToolRoll(fk_result.value);
         if (ik_result.status == KinematicsStatus::Ok) {
             printArmJointAngles(ik_result.value);
             if (verifyZeroArmAngles(ik_result.value)) {
@@ -121,8 +121,8 @@ void printTcpPose(const TcpPose &pose) {
     Serial.print(pose.position.y_m, 6);
     Serial.print(" z_m=");
     Serial.print(pose.position.z_m, 6);
-    Serial.print(" yaw_rad=");
-    Serial.println(pose.yaw_rad, 6);
+    Serial.print(" tool_roll_rad=");
+    Serial.println(pose.tool_roll_rad, 6);
 }
 
 bool verifyZeroArmAngles(const ArmJointAngles &angles) {
@@ -140,7 +140,7 @@ bool verifyZeroFkPose(const TcpPose &pose, const JointOffsets &offsets) {
     return absFloat(pose.position.x_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
            absFloat(pose.position.y_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
            absFloat(pose.position.z_m - expected_z_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
-           absFloat(pose.yaw_rad) <= ZERO_FK_YAW_TOLERANCE_RAD;
+           absFloat(pose.tool_roll_rad) <= ZERO_FK_TOOL_ROLL_TOLERANCE_RAD;
 }
 
 float absFloat(float value) {

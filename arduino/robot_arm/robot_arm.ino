@@ -13,18 +13,18 @@
 #include "pca9685_servo_driver.h"
 #include "robot_calibration.h"
 
-constexpr uint8_t TRAJECTORY_SEGMENT_COUNT = 10;
+constexpr uint8_t TRAJECTORY_SEGMENT_COUNT = 5;
 constexpr uint8_t TRAJECTORY_WAYPOINT_COUNT = TRAJECTORY_SEGMENT_COUNT + 1;
-constexpr uint16_t TRAJECTORY_STEP_DELAY_MS = 1000;
+constexpr uint16_t TRAJECTORY_STEP_DELAY_MS = 2000;
 
 const TcpPose START_POSE = {
-    {0.020f, 0.000f, 0.455f},
+    {0.15f, 0.000f, 0.355f},
     0.0f,
 };
 
 const TcpPose END_POSE = {
-    {0.060f, 0.030f, 0.400f},
-    0.57f,
+    {0.15f, 0.000f, 0.155f},
+    1.57f,
 };
 
 Pca9685ServoDriver servo_driver;
@@ -84,7 +84,7 @@ void loop() {
 
 bool computeTrajectory() {
     KinematicsResult<ArmJointAngles> start_ik =
-        inverseKinematicsPositionYaw(START_POSE);
+        inverseKinematicsPositionToolRoll(START_POSE);
     if (start_ik.status != KinematicsStatus::Ok) {
         Serial.print("Start pose IK failed status=");
         Serial.println(static_cast<int>(start_ik.status));
@@ -108,7 +108,7 @@ bool computeTrajectory() {
 
 bool computeWaypoint(uint8_t waypoint_index, const TcpPose &pose, ArmJointAngles &seed_angles) {
     const KinematicsResult<ArmJointAngles> ik_result =
-        inverseKinematicsPositionYawSeeded(pose, seed_angles);
+        inverseKinematicsPositionToolRollSeeded(pose, seed_angles);
     if (ik_result.status != KinematicsStatus::Ok) {
         Serial.print("Waypoint IK failed index=");
         Serial.print(waypoint_index);
@@ -148,7 +148,7 @@ void executeWaypoint(uint8_t waypoint_index) {
 }
 
 TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, float alpha) {
-    const float yaw_delta_rad = normalizeDemoAngleRad(end_pose.yaw_rad - start_pose.yaw_rad);
+    const float tool_roll_delta_rad = normalizeDemoAngleRad(end_pose.tool_roll_rad - start_pose.tool_roll_rad);
     return {
         {
             start_pose.position.x_m +
@@ -158,7 +158,7 @@ TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, floa
             start_pose.position.z_m +
                 alpha * (end_pose.position.z_m - start_pose.position.z_m),
         },
-        normalizeDemoAngleRad(start_pose.yaw_rad + alpha * yaw_delta_rad),
+        normalizeDemoAngleRad(start_pose.tool_roll_rad + alpha * tool_roll_delta_rad),
     };
 }
 
@@ -204,8 +204,8 @@ void printPose(const TcpPose &pose) {
     Serial.print(pose.position.y_m, 6);
     Serial.print(" z_m=");
     Serial.print(pose.position.z_m, 6);
-    Serial.print(" yaw_rad=");
-    Serial.println(pose.yaw_rad, 6);
+    Serial.print(" tool_roll_rad=");
+    Serial.println(pose.tool_roll_rad, 6);
 }
 
 void printAngles(const ArmJointAngles &angles) {
