@@ -13,23 +13,24 @@ struct Vector3 {
 
 struct TcpPose {
     Vector3 position;
-    float tool_roll_rad;
+    float tool_pitch_rad;
+    float tool_yaw_rad;
 };
 
 struct ArmJointAngles {
+    float j0_rad;
     float j1_rad;
     float j2_rad;
     float j3_rad;
     float j4_rad;
-    float j5_rad;
 };
 
 struct ArmJointPwmUs {
+    uint16_t j0_us;
     uint16_t j1_us;
     uint16_t j2_us;
     uint16_t j3_us;
     uint16_t j4_us;
-    uint16_t j5_us;
 };
 
 enum class KinematicsStatus {
@@ -50,11 +51,11 @@ KinematicsResult<TcpPose> forwardKinematics(
     const ArmJointAngles &angles,
     const JointOffsets &offsets = JOINT_OFFSETS);
 
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionToolRoll(
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionPitchYaw(
     const TcpPose &target_pose,
     const JointOffsets &offsets = JOINT_OFFSETS);
 
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionToolRollSeeded(
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionPitchYawSeeded(
     const TcpPose &target_pose,
     const ArmJointAngles &seed_angles,
     const JointOffsets &offsets = JOINT_OFFSETS);

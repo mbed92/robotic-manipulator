@@ -12,7 +12,7 @@
 
 constexpr float ZERO_ANGLE_TOLERANCE_RAD = 0.000001f;
 constexpr float ZERO_FK_POSITION_TOLERANCE_M = 0.000001f;
-constexpr float ZERO_FK_TOOL_ROLL_TOLERANCE_RAD = 0.000001f;
+constexpr float ZERO_FK_ORIENTATION_TOLERANCE_RAD = 0.000001f;
 
 Pca9685ServoDriver servo_driver;
 
@@ -41,7 +41,7 @@ void setup() {
 
     Serial.println("All servos set to zero positions");
 
-    // J1-J5 define the arm TCP pose. J6 is the gripper and is not part of FK/IK.
+    // J0-J4 define the arm TCP pose. J5 is the gripper and is not part of FK/IK.
     const ArmJointAngles target_angles = {
         JOINT_CALIBRATIONS[0].angle_zero_rad,
         JOINT_CALIBRATIONS[1].angle_zero_rad,
@@ -66,7 +66,7 @@ void setup() {
         }
 
         const KinematicsResult<ArmJointAngles> ik_result =
-            inverseKinematicsPositionToolRoll(fk_result.value);
+            inverseKinematicsPositionPitchYaw(fk_result.value);
         if (ik_result.status == KinematicsStatus::Ok) {
             printArmJointAngles(ik_result.value);
             if (verifyZeroArmAngles(ik_result.value)) {
@@ -102,16 +102,16 @@ void printJointState(uint8_t joint_index, const JointCalibration &joint) {
 }
 
 void printArmJointAngles(const ArmJointAngles &angles) {
-    Serial.print("IK arm joints j1_rad=");
+    Serial.print("IK arm joints j0_rad=");
+    Serial.print(angles.j0_rad, 6);
+    Serial.print(" j1_rad=");
     Serial.print(angles.j1_rad, 6);
     Serial.print(" j2_rad=");
     Serial.print(angles.j2_rad, 6);
     Serial.print(" j3_rad=");
     Serial.print(angles.j3_rad, 6);
     Serial.print(" j4_rad=");
-    Serial.print(angles.j4_rad, 6);
-    Serial.print(" j5_rad=");
-    Serial.println(angles.j5_rad, 6);
+    Serial.println(angles.j4_rad, 6);
 }
 
 void printTcpPose(const TcpPose &pose) {
@@ -121,26 +121,33 @@ void printTcpPose(const TcpPose &pose) {
     Serial.print(pose.position.y_m, 6);
     Serial.print(" z_m=");
     Serial.print(pose.position.z_m, 6);
-    Serial.print(" tool_roll_rad=");
-    Serial.println(pose.tool_roll_rad, 6);
+    Serial.print(" tool_pitch_rad=");
+    Serial.print(pose.tool_pitch_rad, 6);
+    Serial.print(" tool_yaw_rad=");
+    Serial.println(pose.tool_yaw_rad, 6);
 }
 
 bool verifyZeroArmAngles(const ArmJointAngles &angles) {
-    return absFloat(angles.j1_rad) <= ZERO_ANGLE_TOLERANCE_RAD &&
+    return absFloat(angles.j0_rad) <= ZERO_ANGLE_TOLERANCE_RAD &&
+           absFloat(angles.j1_rad) <= ZERO_ANGLE_TOLERANCE_RAD &&
            absFloat(angles.j2_rad) <= ZERO_ANGLE_TOLERANCE_RAD &&
            absFloat(angles.j3_rad) <= ZERO_ANGLE_TOLERANCE_RAD &&
-           absFloat(angles.j4_rad) <= ZERO_ANGLE_TOLERANCE_RAD &&
-           absFloat(angles.j5_rad) <= ZERO_ANGLE_TOLERANCE_RAD;
+           absFloat(angles.j4_rad) <= ZERO_ANGLE_TOLERANCE_RAD;
 }
 
 bool verifyZeroFkPose(const TcpPose &pose, const JointOffsets &offsets) {
     const float expected_z_m =
-        offsets.l1_m + offsets.l2_m + offsets.l3_m + offsets.l4_m + offsets.l5_m;
+        offsets.l1_m +
+        offsets.l2_m +
+        offsets.l3_m +
+        offsets.l4_m +
+        offsets.l5_m;
 
     return absFloat(pose.position.x_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
            absFloat(pose.position.y_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
            absFloat(pose.position.z_m - expected_z_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
-           absFloat(pose.tool_roll_rad) <= ZERO_FK_TOOL_ROLL_TOLERANCE_RAD;
+           absFloat(pose.tool_pitch_rad) <= ZERO_FK_ORIENTATION_TOLERANCE_RAD &&
+           absFloat(pose.tool_yaw_rad) <= ZERO_FK_ORIENTATION_TOLERANCE_RAD;
 }
 
 float absFloat(float value) {

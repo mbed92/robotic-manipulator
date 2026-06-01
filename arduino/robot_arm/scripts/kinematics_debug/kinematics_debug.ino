@@ -48,11 +48,11 @@ void setup() {
         printFkZeroTest(fk_zero.value);
     }
 
-    const ArmJointAngles tool_roll_angles = {0.25f, 0.0f, 0.0f, 0.0f, 0.50f};
-    const KinematicsResult<TcpPose> fk_tool_roll = forwardKinematics(tool_roll_angles);
-    printStatus("FK tool roll", fk_tool_roll.status);
-    if (fk_tool_roll.status == KinematicsStatus::Ok) {
-        printPose(fk_tool_roll.value);
+    const ArmJointAngles tool_yaw_angles = {0.25f, 0.0f, 0.0f, 0.0f, 0.50f};
+    const KinematicsResult<TcpPose> fk_tool_yaw = forwardKinematics(tool_yaw_angles);
+    printStatus("FK tool yaw", fk_tool_yaw.status);
+    if (fk_tool_yaw.status == KinematicsStatus::Ok) {
+        printPose(fk_tool_yaw.value);
     }
 
     const KinematicsResult<ArmJointPwmUs> zero_pwm = jointAnglesToPwmUs(zero_angles);
@@ -69,8 +69,8 @@ void setup() {
     printStatus("PWM limit", out_of_limit_pwm.status);
 
     const KinematicsResult<ArmJointAngles> ik_result =
-        inverseKinematicsPositionToolRoll(fk_zero.value);
-    printStatus("IK position tool roll", ik_result.status);
+        inverseKinematicsPositionPitchYaw(fk_zero.value);
+    printStatus("IK position pitch yaw", ik_result.status);
 
     runIkStaticTests();
     runTrajectoryTest();
@@ -92,34 +92,36 @@ void printPose(const TcpPose &pose) {
     Serial.print(pose.position.y_m, 6);
     Serial.print(" z_m=");
     Serial.print(pose.position.z_m, 6);
-    Serial.print(" tool_roll_rad=");
-    Serial.println(pose.tool_roll_rad, 6);
+    Serial.print(" tool_pitch_rad=");
+    Serial.print(pose.tool_pitch_rad, 6);
+    Serial.print(" tool_yaw_rad=");
+    Serial.println(pose.tool_yaw_rad, 6);
 }
 
 void printAngles(const ArmJointAngles &angles) {
-    Serial.print("angles j1=");
+    Serial.print("angles j0=");
+    Serial.print(angles.j0_rad, 6);
+    Serial.print(" j1=");
     Serial.print(angles.j1_rad, 6);
     Serial.print(" j2=");
     Serial.print(angles.j2_rad, 6);
     Serial.print(" j3=");
     Serial.print(angles.j3_rad, 6);
     Serial.print(" j4=");
-    Serial.print(angles.j4_rad, 6);
-    Serial.print(" j5=");
-    Serial.println(angles.j5_rad, 6);
+    Serial.println(angles.j4_rad, 6);
 }
 
 void printPwm(const ArmJointPwmUs &pwm_us) {
-    Serial.print("pwm j1=");
+    Serial.print("pwm j0=");
+    Serial.print(pwm_us.j0_us);
+    Serial.print(" j1=");
     Serial.print(pwm_us.j1_us);
     Serial.print(" j2=");
     Serial.print(pwm_us.j2_us);
     Serial.print(" j3=");
     Serial.print(pwm_us.j3_us);
     Serial.print(" j4=");
-    Serial.print(pwm_us.j4_us);
-    Serial.print(" j5=");
-    Serial.println(pwm_us.j5_us);
+    Serial.println(pwm_us.j4_us);
 }
 
 void runIkStaticTests() {
@@ -134,7 +136,7 @@ void runIkStaticTests() {
         {0.35f, 0.25f, -0.35f, 0.20f, 0.10f},
         true);
     runIkRoundTripTest(
-        "IK tool roll reconstruction",
+        "IK tool yaw reconstruction",
         {0.20f, 0.20f, -0.30f, 0.15f, 0.45f},
         true);
 
@@ -143,10 +145,11 @@ void runIkStaticTests() {
          0.0f,
          JOINT_OFFSETS.l1_m},
         0.0f,
+        0.0f,
     };
     runIkPoseTest("IK out of reach", out_of_reach_pose, false, nullptr);
 
-    const TcpPose invalid_pose = {{NAN, 0.0f, JOINT_OFFSETS.l1_m}, 0.0f};
+    const TcpPose invalid_pose = {{NAN, 0.0f, JOINT_OFFSETS.l1_m}, 0.0f, 0.0f};
     runIkPoseTest("IK invalid input", invalid_pose, false, nullptr);
 }
 
@@ -172,8 +175,8 @@ void runIkPoseTest(
     const ArmJointAngles *seed_angles) {
     const KinematicsResult<ArmJointAngles> ik_result =
         seed_angles == nullptr
-            ? inverseKinematicsPositionToolRoll(target_pose)
-            : inverseKinematicsPositionToolRollSeeded(target_pose, *seed_angles);
+            ? inverseKinematicsPositionPitchYaw(target_pose)
+            : inverseKinematicsPositionPitchYawSeeded(target_pose, *seed_angles);
 
     Serial.print(label);
     Serial.print(" ik_status=");
@@ -200,14 +203,21 @@ void runIkPoseTest(
 
     const float pos_error_m =
         positionErrorM(fk_result.value.position, target_pose.position);
-    const float tool_roll_error_rad =
-        fabs(angleDistanceRad(fk_result.value.tool_roll_rad, target_pose.tool_roll_rad));
-    const bool passed = pos_error_m <= 0.005f && tool_roll_error_rad <= 0.03f;
+    const float tool_pitch_error_rad =
+        fabs(angleDistanceRad(fk_result.value.tool_pitch_rad, target_pose.tool_pitch_rad));
+    const float tool_yaw_error_rad =
+        fabs(angleDistanceRad(fk_result.value.tool_yaw_rad, target_pose.tool_yaw_rad));
+    const bool passed =
+        pos_error_m <= 0.005f &&
+        tool_pitch_error_rad <= 0.03f &&
+        tool_yaw_error_rad <= 0.03f;
 
     Serial.print(" pos_error_m=");
     Serial.print(pos_error_m, 6);
-    Serial.print(" tool_roll_error_rad=");
-    Serial.print(tool_roll_error_rad, 6);
+    Serial.print(" tool_pitch_error_rad=");
+    Serial.print(tool_pitch_error_rad, 6);
+    Serial.print(" tool_yaw_error_rad=");
+    Serial.print(tool_yaw_error_rad, 6);
     Serial.print(" result=");
     Serial.println(passed ? "PASS" : "FAIL");
     printPose(target_pose);
@@ -237,8 +247,8 @@ void runTrajectoryTest() {
         const TcpPose target_pose = interpolatePose(start_fk.value, end_fk.value, alpha);
         const KinematicsResult<ArmJointAngles> ik_result =
             has_previous
-                ? inverseKinematicsPositionToolRollSeeded(target_pose, previous_angles)
-                : inverseKinematicsPositionToolRoll(target_pose);
+                ? inverseKinematicsPositionPitchYawSeeded(target_pose, previous_angles)
+                : inverseKinematicsPositionPitchYaw(target_pose);
 
         Serial.print("Trajectory sample ");
         Serial.print(i);
@@ -256,9 +266,13 @@ void runTrajectoryTest() {
             fk_result.status == KinematicsStatus::Ok
                 ? positionErrorM(fk_result.value.position, target_pose.position)
                 : 999.0f;
-        const float tool_roll_error_rad =
+        const float tool_pitch_error_rad =
             fk_result.status == KinematicsStatus::Ok
-                ? fabs(angleDistanceRad(fk_result.value.tool_roll_rad, target_pose.tool_roll_rad))
+                ? fabs(angleDistanceRad(fk_result.value.tool_pitch_rad, target_pose.tool_pitch_rad))
+                : 999.0f;
+        const float tool_yaw_error_rad =
+            fk_result.status == KinematicsStatus::Ok
+                ? fabs(angleDistanceRad(fk_result.value.tool_yaw_rad, target_pose.tool_yaw_rad))
                 : 999.0f;
         const float delta_rad =
             has_previous ? maxJointDeltaRad(ik_result.value, previous_angles) : 0.0f;
@@ -270,14 +284,17 @@ void runTrajectoryTest() {
         const bool sample_passed =
             fk_result.status == KinematicsStatus::Ok &&
             pos_error_m <= 0.005f &&
-            tool_roll_error_rad <= 0.03f &&
+            tool_pitch_error_rad <= 0.03f &&
+            tool_yaw_error_rad <= 0.03f &&
             (!has_previous || delta_rad <= 0.35f);
         passed = passed && sample_passed;
 
         Serial.print(" pos_error_m=");
         Serial.print(pos_error_m, 6);
-        Serial.print(" tool_roll_error_rad=");
-        Serial.print(tool_roll_error_rad, 6);
+        Serial.print(" tool_pitch_error_rad=");
+        Serial.print(tool_pitch_error_rad, 6);
+        Serial.print(" tool_yaw_error_rad=");
+        Serial.print(tool_yaw_error_rad, 6);
         Serial.print(" max_joint_delta_rad=");
         Serial.print(delta_rad, 6);
         Serial.print(" result=");
@@ -294,7 +311,8 @@ void runTrajectoryTest() {
 }
 
 TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, float alpha) {
-    const float tool_roll_delta_rad = angleDistanceRad(end_pose.tool_roll_rad, start_pose.tool_roll_rad);
+    const float tool_pitch_delta_rad = angleDistanceRad(end_pose.tool_pitch_rad, start_pose.tool_pitch_rad);
+    const float tool_yaw_delta_rad = angleDistanceRad(end_pose.tool_yaw_rad, start_pose.tool_yaw_rad);
     return {
         {
             start_pose.position.x_m +
@@ -304,7 +322,8 @@ TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, floa
             start_pose.position.z_m +
                 alpha * (end_pose.position.z_m - start_pose.position.z_m),
         },
-        start_pose.tool_roll_rad + alpha * tool_roll_delta_rad,
+        start_pose.tool_pitch_rad + alpha * tool_pitch_delta_rad,
+        start_pose.tool_yaw_rad + alpha * tool_yaw_delta_rad,
     };
 }
 
@@ -327,12 +346,15 @@ float positionErrorM(const Vector3 &a, const Vector3 &b) {
 }
 
 float maxJointDeltaRad(const ArmJointAngles &a, const ArmJointAngles &b) {
-    float max_delta_rad = fabs(angleDistanceRad(a.j1_rad, b.j1_rad));
+    float max_delta_rad = fabs(angleDistanceRad(a.j0_rad, b.j0_rad));
+    const float j1_delta_rad = fabs(angleDistanceRad(a.j1_rad, b.j1_rad));
     const float j2_delta_rad = fabs(angleDistanceRad(a.j2_rad, b.j2_rad));
     const float j3_delta_rad = fabs(angleDistanceRad(a.j3_rad, b.j3_rad));
     const float j4_delta_rad = fabs(angleDistanceRad(a.j4_rad, b.j4_rad));
-    const float j5_delta_rad = fabs(angleDistanceRad(a.j5_rad, b.j5_rad));
 
+    if (j1_delta_rad > max_delta_rad) {
+        max_delta_rad = j1_delta_rad;
+    }
     if (j2_delta_rad > max_delta_rad) {
         max_delta_rad = j2_delta_rad;
     }
@@ -341,9 +363,6 @@ float maxJointDeltaRad(const ArmJointAngles &a, const ArmJointAngles &b) {
     }
     if (j4_delta_rad > max_delta_rad) {
         max_delta_rad = j4_delta_rad;
-    }
-    if (j5_delta_rad > max_delta_rad) {
-        max_delta_rad = j5_delta_rad;
     }
     return max_delta_rad;
 }
@@ -360,11 +379,12 @@ void printFkZeroTest(const TcpPose &pose) {
         fabs(pose.position.x_m) <= tolerance_m &&
         fabs(pose.position.y_m) <= tolerance_m &&
         fabs(pose.position.z_m - expected_z_m) <= tolerance_m &&
-        fabs(pose.tool_roll_rad) <= tolerance_m;
+        fabs(pose.tool_pitch_rad) <= tolerance_m &&
+        fabs(pose.tool_yaw_rad) <= tolerance_m;
 
     Serial.print("FK zero expected x_m=0.000000 y_m=0.000000 z_m=");
     Serial.print(expected_z_m, 6);
-    Serial.print(" tool_roll_rad=0.000000 result=");
+    Serial.print(" tool_pitch_rad=0.000000 tool_yaw_rad=0.000000 result=");
     Serial.println(passed ? "PASS" : "FAIL");
 }
 

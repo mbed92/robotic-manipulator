@@ -39,7 +39,11 @@ const JointCalibration JOINT_CALIBRATIONS[ROBOT_TOTAL_JOINT_COUNT] = {
     {5, 600, 1500, 2400, JOINT_ANGLE_MIN_RAD, JOINT_ANGLE_ZERO_RAD, JOINT_ANGLE_MAX_RAD},
 };
 
-// L1 is the distance from J1 to J2. J1 is at 0,0,0. Units: meters.
+// Joint indexing follows the physical robot: J0 base, J1-J3 planar arm,
+// J4 local TCP rotation, J5 gripper.
+// L1 is the vertical distance from J0/base to J1/shoulder. J0 is at 0,0,0.
+// L2-L3-L4 are the planar arm links. L5 is the flange-to-TCP tool length.
+// Units: meters.
 const JointOffsets JOINT_OFFSETS = {
     0.0625f,
     0.1035f,
