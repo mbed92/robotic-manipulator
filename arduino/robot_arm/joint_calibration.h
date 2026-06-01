@@ -5,8 +5,7 @@
 
 constexpr uint8_t ROBOT_ARM_JOINT_COUNT = 6;
 
-struct JointCalibration
-{
+struct JointCalibration {
     uint8_t channel;
     uint16_t pwm_min_us;
     uint16_t pwm_zero_us;

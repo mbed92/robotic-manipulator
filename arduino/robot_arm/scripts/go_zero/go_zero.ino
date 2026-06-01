@@ -11,10 +11,9 @@
 
 Pca9685ServoDriver servo_driver;
 
-void printJointState(uint8_t joint_index, const JointCalibration& joint);
+void printJointState(uint8_t joint_index, const JointCalibration &joint);
 
-void setup()
-{
+void setup() {
     Serial.begin(115200);
 
     if (!servo_driver.begin()) {
@@ -25,7 +24,7 @@ void setup()
     delay(100);
 
     for (uint8_t i = 0; i < ROBOT_ARM_JOINT_COUNT; ++i) {
-        const JointCalibration& joint = JOINT_CALIBRATIONS[i];
+        const JointCalibration &joint = JOINT_CALIBRATIONS[i];
         servo_driver.setServoUs(joint.channel, joint.pwm_zero_us);
         printJointState(i, joint);
     }
@@ -33,8 +32,7 @@ void setup()
     Serial.println("All servos set to zero positions");
 }
 
-void printJointState(uint8_t joint_index, const JointCalibration& joint)
-{
+void printJointState(uint8_t joint_index, const JointCalibration &joint) {
     Serial.print("Joint ");
     Serial.print(joint_index + 1);
     Serial.print(" channel=");
@@ -45,6 +43,5 @@ void printJointState(uint8_t joint_index, const JointCalibration& joint)
     Serial.println(joint.angle_zero_rad, 6);
 }
 
-void loop()
-{
+void loop() {
 }

@@ -23,13 +23,12 @@ constexpr uint8_t DANCE_STEP_COUNT = sizeof(DANCE_OFFSETS_US) / sizeof(DANCE_OFF
 
 Pca9685ServoDriver servo_driver;
 
-void printJointState(uint8_t joint_index, const JointCalibration& joint);
-uint16_t clampPwmUs(const JointCalibration& joint, int32_t pwm_us);
+void printJointState(uint8_t joint_index, const JointCalibration &joint);
+uint16_t clampPwmUs(const JointCalibration &joint, int32_t pwm_us);
 void moveToZero();
 void moveToDanceStep(uint8_t step_index);
 
-void setup()
-{
+void setup() {
     Serial.begin(115200);
 
     if (!servo_driver.begin()) {
@@ -44,8 +43,7 @@ void setup()
     Serial.println("Demo dance started");
 }
 
-void printJointState(uint8_t joint_index, const JointCalibration& joint)
-{
+void printJointState(uint8_t joint_index, const JointCalibration &joint) {
     Serial.print("Joint ");
     Serial.print(joint_index + 1);
     Serial.print(" channel=");
@@ -56,8 +54,7 @@ void printJointState(uint8_t joint_index, const JointCalibration& joint)
     Serial.println(joint.angle_zero_rad, 6);
 }
 
-uint16_t clampPwmUs(const JointCalibration& joint, int32_t pwm_us)
-{
+uint16_t clampPwmUs(const JointCalibration &joint, int32_t pwm_us) {
     if (pwm_us < joint.pwm_min_us) {
         return joint.pwm_min_us;
     }
@@ -67,10 +64,9 @@ uint16_t clampPwmUs(const JointCalibration& joint, int32_t pwm_us)
     return static_cast<uint16_t>(pwm_us);
 }
 
-void moveToZero()
-{
+void moveToZero() {
     for (uint8_t i = 0; i < ROBOT_ARM_JOINT_COUNT; ++i) {
-        const JointCalibration& joint = JOINT_CALIBRATIONS[i];
+        const JointCalibration &joint = JOINT_CALIBRATIONS[i];
         servo_driver.setServoUs(joint.channel, joint.pwm_zero_us);
         printJointState(i, joint);
     }
@@ -78,13 +74,12 @@ void moveToZero()
     Serial.println("All servos set to zero positions");
 }
 
-void moveToDanceStep(uint8_t step_index)
-{
+void moveToDanceStep(uint8_t step_index) {
     Serial.print("Dance step ");
     Serial.println(step_index + 1);
 
     for (uint8_t i = 0; i < ROBOT_ARM_JOINT_COUNT; ++i) {
-        const JointCalibration& joint = JOINT_CALIBRATIONS[i];
+        const JointCalibration &joint = JOINT_CALIBRATIONS[i];
         const uint16_t target_pwm_us = clampPwmUs(
             joint, static_cast<int32_t>(joint.pwm_zero_us) + DANCE_OFFSETS_US[step_index][i]);
         servo_driver.setServoUs(joint.channel, target_pwm_us);
@@ -98,8 +93,7 @@ void moveToDanceStep(uint8_t step_index)
     }
 }
 
-void loop()
-{
+void loop() {
     for (uint8_t step = 0; step < DANCE_STEP_COUNT; ++step) {
         moveToDanceStep(step);
         delay(DANCE_HOLD_MS);
