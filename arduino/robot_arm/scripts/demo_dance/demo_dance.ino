@@ -1,6 +1,6 @@
 /**
  * Demo dance for the robot arm.
- * This program starts from HOME and moves joints in small PWM ranges around HOME.
+ * This program starts from zero and moves joints in small PWM ranges around zero.
  * Adjust joint_calibration.h to change PWM and angle calibration values.
  */
 
@@ -25,7 +25,7 @@ Pca9685ServoDriver servo_driver;
 
 void printJointState(uint8_t joint_index, const JointCalibration& joint);
 uint16_t clampPwmUs(const JointCalibration& joint, int32_t pwm_us);
-void moveToHome();
+void moveToZero();
 void moveToDanceStep(uint8_t step_index);
 
 void setup()
@@ -39,7 +39,7 @@ void setup()
 
     delay(100);
 
-    moveToHome();
+    moveToZero();
 
     Serial.println("Demo dance started");
 }
@@ -50,10 +50,10 @@ void printJointState(uint8_t joint_index, const JointCalibration& joint)
     Serial.print(joint_index + 1);
     Serial.print(" channel=");
     Serial.print(joint.channel);
-    Serial.print(" pwm_home_us=");
-    Serial.print(joint.pwm_home_us);
-    Serial.print(" angle_home_rad=");
-    Serial.println(joint.angle_home_rad, 6);
+    Serial.print(" pwm_zero_us=");
+    Serial.print(joint.pwm_zero_us);
+    Serial.print(" angle_zero_rad=");
+    Serial.println(joint.angle_zero_rad, 6);
 }
 
 uint16_t clampPwmUs(const JointCalibration& joint, int32_t pwm_us)
@@ -67,15 +67,15 @@ uint16_t clampPwmUs(const JointCalibration& joint, int32_t pwm_us)
     return static_cast<uint16_t>(pwm_us);
 }
 
-void moveToHome()
+void moveToZero()
 {
     for (uint8_t i = 0; i < ROBOT_ARM_JOINT_COUNT; ++i) {
         const JointCalibration& joint = JOINT_CALIBRATIONS[i];
-        servo_driver.setServoUs(joint.channel, joint.pwm_home_us);
+        servo_driver.setServoUs(joint.channel, joint.pwm_zero_us);
         printJointState(i, joint);
     }
 
-    Serial.println("All servos set to HOME positions");
+    Serial.println("All servos set to zero positions");
 }
 
 void moveToDanceStep(uint8_t step_index)
@@ -86,7 +86,7 @@ void moveToDanceStep(uint8_t step_index)
     for (uint8_t i = 0; i < ROBOT_ARM_JOINT_COUNT; ++i) {
         const JointCalibration& joint = JOINT_CALIBRATIONS[i];
         const uint16_t target_pwm_us = clampPwmUs(
-            joint, static_cast<int32_t>(joint.pwm_home_us) + DANCE_OFFSETS_US[step_index][i]);
+            joint, static_cast<int32_t>(joint.pwm_zero_us) + DANCE_OFFSETS_US[step_index][i]);
         servo_driver.setServoUs(joint.channel, target_pwm_us);
 
         Serial.print("Joint ");
