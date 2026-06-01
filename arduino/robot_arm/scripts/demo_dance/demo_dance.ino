@@ -1,12 +1,12 @@
 /**
  * Demo dance for the robot arm.
  * This program starts from zero and moves joints in small PWM ranges around zero.
- * Adjust joint_calibration.h to change PWM and angle calibration values.
+ * Adjust robot_calibration.h to change PWM and angle calibration values.
  */
 
 #include <Wire.h>
 
-#include "joint_calibration.h"
+#include "robot_calibration.h"
 #include "pca9685_servo_driver.h"
 
 constexpr uint16_t DANCE_HOLD_MS = 350;

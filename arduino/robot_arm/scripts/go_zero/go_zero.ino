@@ -1,12 +1,12 @@
 /**
  * Zero position for the robot arm.
  * This program sets all servos to their configured zero positions.
- * Adjust joint_calibration.h to change PWM and angle calibration values.
+ * Adjust robot_calibration.h to change PWM and angle calibration values.
  */
 
 #include <Wire.h>
 
-#include "joint_calibration.h"
+#include "robot_calibration.h"
 #include "pca9685_servo_driver.h"
 
 Pca9685ServoDriver servo_driver;

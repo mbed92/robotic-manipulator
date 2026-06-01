@@ -1,5 +1,5 @@
-#ifndef ROBOT_ARM_JOINT_CALIBRATION_H
-#define ROBOT_ARM_JOINT_CALIBRATION_H
+#ifndef ROBOT_ARM_ROBOT_CALIBRATION_H
+#define ROBOT_ARM_ROBOT_CALIBRATION_H
 
 #include <Arduino.h>
 
@@ -15,6 +15,14 @@ struct JointCalibration {
     float angle_max_rad;
 };
 
+struct JointOffsets {
+    float l1_m;
+    float l2_m;
+    float l3_m;
+    float l4_m;
+    float l5_m;
+};
+
 constexpr float JOINT_ANGLE_MIN_RAD = -1.04719755120f;
 constexpr float JOINT_ANGLE_ZERO_RAD = 0.0f;
 constexpr float JOINT_ANGLE_MAX_RAD = 1.04719755120f;
@@ -26,6 +34,15 @@ const JointCalibration JOINT_CALIBRATIONS[ROBOT_ARM_JOINT_COUNT] = {
     {3, 600, 1500, 2400, JOINT_ANGLE_MIN_RAD, JOINT_ANGLE_ZERO_RAD, JOINT_ANGLE_MAX_RAD},
     {4, 600, 1500, 2400, JOINT_ANGLE_MIN_RAD, JOINT_ANGLE_ZERO_RAD, JOINT_ANGLE_MAX_RAD},
     {5, 600, 1500, 2400, JOINT_ANGLE_MIN_RAD, JOINT_ANGLE_ZERO_RAD, JOINT_ANGLE_MAX_RAD},
+};
+
+// L1 is the distance from J1 to J2. J1 is at 0,0,0. Units: meters.
+const JointOffsets JOINT_OFFSETS = {
+    0.0625f,
+    0.1035f,
+    0.1480f,
+    0.0700f,
+    0.1050f,
 };
 
 #endif
