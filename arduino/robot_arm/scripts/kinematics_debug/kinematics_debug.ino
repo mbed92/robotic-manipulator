@@ -1,6 +1,6 @@
 /**
  * Kinematics debug sketch for the robot arm.
- * This program validates FK, angle-to-PWM conversion, and the current IK stub.
+ * This program validates FK, IK, Cartesian trajectory math, and angle-to-PWM conversion.
  */
 
 #include <math.h>
@@ -10,6 +10,7 @@
 
 void printStatus(const char *label, KinematicsStatus status);
 void printPose(const TcpPose &pose);
+void printAngles(const ArmJointAngles &angles);
 void printPwm(const ArmJointPwmUs &pwm_us);
 void printFkZeroTest(const TcpPose &pose);
 void runPwmInterpolationTests();
@@ -19,6 +20,21 @@ void printPwmInterpolationTest(
     float angle_rad,
     uint16_t expected_pwm_us,
     KinematicsStatus expected_status);
+void runIkStaticTests();
+void runIkRoundTripTest(
+    const char *label,
+    const ArmJointAngles &source_angles,
+    bool expected_reachable);
+void runIkPoseTest(
+    const char *label,
+    const TcpPose &target_pose,
+    bool expected_reachable,
+    const ArmJointAngles *seed_angles);
+void runTrajectoryTest();
+TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, float alpha);
+float angleDistanceRad(float a_rad, float b_rad);
+float positionErrorM(const Vector3 &a, const Vector3 &b);
+float maxJointDeltaRad(const ArmJointAngles &a, const ArmJointAngles &b);
 
 void setup() {
     Serial.begin(115200);
@@ -55,6 +71,9 @@ void setup() {
     const KinematicsResult<ArmJointAngles> ik_result =
         inverseKinematicsPositionYaw(fk_zero.value);
     printStatus("IK position yaw", ik_result.status);
+
+    runIkStaticTests();
+    runTrajectoryTest();
 }
 
 void loop() {
@@ -77,6 +96,19 @@ void printPose(const TcpPose &pose) {
     Serial.println(pose.yaw_rad, 6);
 }
 
+void printAngles(const ArmJointAngles &angles) {
+    Serial.print("angles j1=");
+    Serial.print(angles.j1_rad, 6);
+    Serial.print(" j2=");
+    Serial.print(angles.j2_rad, 6);
+    Serial.print(" j3=");
+    Serial.print(angles.j3_rad, 6);
+    Serial.print(" j4=");
+    Serial.print(angles.j4_rad, 6);
+    Serial.print(" j5=");
+    Serial.println(angles.j5_rad, 6);
+}
+
 void printPwm(const ArmJointPwmUs &pwm_us) {
     Serial.print("pwm j1=");
     Serial.print(pwm_us.j1_us);
@@ -88,6 +120,232 @@ void printPwm(const ArmJointPwmUs &pwm_us) {
     Serial.print(pwm_us.j4_us);
     Serial.print(" j5=");
     Serial.println(pwm_us.j5_us);
+}
+
+void runIkStaticTests() {
+    Serial.println("IK static tests started");
+
+    runIkRoundTripTest(
+        "IK reachable +X",
+        {0.0f, 0.35f, -0.45f, 0.25f, 0.0f},
+        true);
+    runIkRoundTripTest(
+        "IK reachable nonzero Y",
+        {0.35f, 0.25f, -0.35f, 0.20f, 0.10f},
+        true);
+    runIkRoundTripTest(
+        "IK yaw reconstruction",
+        {0.20f, 0.20f, -0.30f, 0.15f, 0.45f},
+        true);
+
+    const TcpPose out_of_reach_pose = {
+        {JOINT_OFFSETS.l2_m + JOINT_OFFSETS.l3_m + JOINT_OFFSETS.l4_m + JOINT_OFFSETS.l5_m + 0.10f,
+         0.0f,
+         JOINT_OFFSETS.l1_m},
+        0.0f,
+    };
+    runIkPoseTest("IK out of reach", out_of_reach_pose, false, nullptr);
+
+    const TcpPose invalid_pose = {{NAN, 0.0f, JOINT_OFFSETS.l1_m}, 0.0f};
+    runIkPoseTest("IK invalid input", invalid_pose, false, nullptr);
+}
+
+void runIkRoundTripTest(
+    const char *label,
+    const ArmJointAngles &source_angles,
+    bool expected_reachable) {
+    const KinematicsResult<TcpPose> fk_result = forwardKinematics(source_angles);
+    printStatus(label, fk_result.status);
+    if (fk_result.status != KinematicsStatus::Ok) {
+        Serial.print(label);
+        Serial.println(" result=FAIL FK source");
+        return;
+    }
+
+    runIkPoseTest(label, fk_result.value, expected_reachable, nullptr);
+}
+
+void runIkPoseTest(
+    const char *label,
+    const TcpPose &target_pose,
+    bool expected_reachable,
+    const ArmJointAngles *seed_angles) {
+    const KinematicsResult<ArmJointAngles> ik_result =
+        seed_angles == nullptr
+            ? inverseKinematicsPositionYaw(target_pose)
+            : inverseKinematicsPositionYawSeeded(target_pose, *seed_angles);
+
+    Serial.print(label);
+    Serial.print(" ik_status=");
+    Serial.print(static_cast<int>(ik_result.status));
+
+    if (!expected_reachable) {
+        Serial.print(" result=");
+        Serial.println(ik_result.status == KinematicsStatus::Ok ? "FAIL" : "PASS");
+        return;
+    }
+
+    if (ik_result.status != KinematicsStatus::Ok) {
+        Serial.println(" result=FAIL");
+        return;
+    }
+
+    const KinematicsResult<TcpPose> fk_result = forwardKinematics(ik_result.value);
+    if (fk_result.status != KinematicsStatus::Ok) {
+        Serial.print(" fk_status=");
+        Serial.print(static_cast<int>(fk_result.status));
+        Serial.println(" result=FAIL");
+        return;
+    }
+
+    const float pos_error_m =
+        positionErrorM(fk_result.value.position, target_pose.position);
+    const float yaw_error_rad =
+        fabs(angleDistanceRad(fk_result.value.yaw_rad, target_pose.yaw_rad));
+    const bool passed = pos_error_m <= 0.005f && yaw_error_rad <= 0.03f;
+
+    Serial.print(" pos_error_m=");
+    Serial.print(pos_error_m, 6);
+    Serial.print(" yaw_error_rad=");
+    Serial.print(yaw_error_rad, 6);
+    Serial.print(" result=");
+    Serial.println(passed ? "PASS" : "FAIL");
+    printPose(target_pose);
+    printAngles(ik_result.value);
+}
+
+void runTrajectoryTest() {
+    Serial.println("Cartesian trajectory test started");
+
+    const ArmJointAngles start_angles = {0.05f, 0.22f, -0.30f, 0.16f, 0.02f};
+    const ArmJointAngles end_angles = {0.30f, 0.30f, -0.36f, 0.18f, -0.08f};
+    const KinematicsResult<TcpPose> start_fk = forwardKinematics(start_angles);
+    const KinematicsResult<TcpPose> end_fk = forwardKinematics(end_angles);
+    if (start_fk.status != KinematicsStatus::Ok || end_fk.status != KinematicsStatus::Ok) {
+        Serial.println("Cartesian trajectory result=FAIL FK endpoints");
+        return;
+    }
+
+    constexpr uint8_t SAMPLE_COUNT = 10;
+    ArmJointAngles previous_angles = start_angles;
+    bool has_previous = false;
+    bool passed = true;
+    float max_delta_rad = 0.0f;
+
+    for (uint8_t i = 0; i <= SAMPLE_COUNT; ++i) {
+        const float alpha = static_cast<float>(i) / static_cast<float>(SAMPLE_COUNT);
+        const TcpPose target_pose = interpolatePose(start_fk.value, end_fk.value, alpha);
+        const KinematicsResult<ArmJointAngles> ik_result =
+            has_previous
+                ? inverseKinematicsPositionYawSeeded(target_pose, previous_angles)
+                : inverseKinematicsPositionYaw(target_pose);
+
+        Serial.print("Trajectory sample ");
+        Serial.print(i);
+        Serial.print(" ik_status=");
+        Serial.print(static_cast<int>(ik_result.status));
+
+        if (ik_result.status != KinematicsStatus::Ok) {
+            Serial.println(" result=FAIL");
+            passed = false;
+            continue;
+        }
+
+        const KinematicsResult<TcpPose> fk_result = forwardKinematics(ik_result.value);
+        const float pos_error_m =
+            fk_result.status == KinematicsStatus::Ok
+                ? positionErrorM(fk_result.value.position, target_pose.position)
+                : 999.0f;
+        const float yaw_error_rad =
+            fk_result.status == KinematicsStatus::Ok
+                ? fabs(angleDistanceRad(fk_result.value.yaw_rad, target_pose.yaw_rad))
+                : 999.0f;
+        const float delta_rad =
+            has_previous ? maxJointDeltaRad(ik_result.value, previous_angles) : 0.0f;
+
+        if (delta_rad > max_delta_rad) {
+            max_delta_rad = delta_rad;
+        }
+
+        const bool sample_passed =
+            fk_result.status == KinematicsStatus::Ok &&
+            pos_error_m <= 0.005f &&
+            yaw_error_rad <= 0.03f &&
+            (!has_previous || delta_rad <= 0.35f);
+        passed = passed && sample_passed;
+
+        Serial.print(" pos_error_m=");
+        Serial.print(pos_error_m, 6);
+        Serial.print(" yaw_error_rad=");
+        Serial.print(yaw_error_rad, 6);
+        Serial.print(" max_joint_delta_rad=");
+        Serial.print(delta_rad, 6);
+        Serial.print(" result=");
+        Serial.println(sample_passed ? "PASS" : "FAIL");
+
+        previous_angles = ik_result.value;
+        has_previous = true;
+    }
+
+    Serial.print("Cartesian trajectory max_joint_delta_rad=");
+    Serial.print(max_delta_rad, 6);
+    Serial.print(" result=");
+    Serial.println(passed ? "PASS" : "FAIL");
+}
+
+TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, float alpha) {
+    const float yaw_delta_rad = angleDistanceRad(end_pose.yaw_rad, start_pose.yaw_rad);
+    return {
+        {
+            start_pose.position.x_m +
+                alpha * (end_pose.position.x_m - start_pose.position.x_m),
+            start_pose.position.y_m +
+                alpha * (end_pose.position.y_m - start_pose.position.y_m),
+            start_pose.position.z_m +
+                alpha * (end_pose.position.z_m - start_pose.position.z_m),
+        },
+        start_pose.yaw_rad + alpha * yaw_delta_rad,
+    };
+}
+
+float angleDistanceRad(float a_rad, float b_rad) {
+    float delta_rad = a_rad - b_rad;
+    while (delta_rad > PI) {
+        delta_rad -= 2.0f * PI;
+    }
+    while (delta_rad < -PI) {
+        delta_rad += 2.0f * PI;
+    }
+    return delta_rad;
+}
+
+float positionErrorM(const Vector3 &a, const Vector3 &b) {
+    const float dx_m = a.x_m - b.x_m;
+    const float dy_m = a.y_m - b.y_m;
+    const float dz_m = a.z_m - b.z_m;
+    return sqrt(dx_m * dx_m + dy_m * dy_m + dz_m * dz_m);
+}
+
+float maxJointDeltaRad(const ArmJointAngles &a, const ArmJointAngles &b) {
+    float max_delta_rad = fabs(angleDistanceRad(a.j1_rad, b.j1_rad));
+    const float j2_delta_rad = fabs(angleDistanceRad(a.j2_rad, b.j2_rad));
+    const float j3_delta_rad = fabs(angleDistanceRad(a.j3_rad, b.j3_rad));
+    const float j4_delta_rad = fabs(angleDistanceRad(a.j4_rad, b.j4_rad));
+    const float j5_delta_rad = fabs(angleDistanceRad(a.j5_rad, b.j5_rad));
+
+    if (j2_delta_rad > max_delta_rad) {
+        max_delta_rad = j2_delta_rad;
+    }
+    if (j3_delta_rad > max_delta_rad) {
+        max_delta_rad = j3_delta_rad;
+    }
+    if (j4_delta_rad > max_delta_rad) {
+        max_delta_rad = j4_delta_rad;
+    }
+    if (j5_delta_rad > max_delta_rad) {
+        max_delta_rad = j5_delta_rad;
+    }
+    return max_delta_rad;
 }
 
 void printFkZeroTest(const TcpPose &pose) {
