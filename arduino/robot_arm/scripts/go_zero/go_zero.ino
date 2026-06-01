@@ -6,12 +6,14 @@
 
 #include <Wire.h>
 
-#include "robot_calibration.h"
+#include "kinematics.h"
 #include "pca9685_servo_driver.h"
+#include "robot_calibration.h"
 
 Pca9685ServoDriver servo_driver;
 
 void printJointState(uint8_t joint_index, const JointCalibration &joint);
+void printTcpPose(const TcpPose &pose);
 
 void setup() {
     Serial.begin(115200);
@@ -30,6 +32,21 @@ void setup() {
     }
 
     Serial.println("All servos set to zero positions");
+
+    const ArmJointAngles target_angles = {
+        JOINT_CALIBRATIONS[0].angle_zero_rad,
+        JOINT_CALIBRATIONS[1].angle_zero_rad,
+        JOINT_CALIBRATIONS[2].angle_zero_rad,
+        JOINT_CALIBRATIONS[3].angle_zero_rad,
+        JOINT_CALIBRATIONS[4].angle_zero_rad,
+    };
+    const KinematicsResult<TcpPose> fk_result = forwardKinematics(target_angles);
+    if (fk_result.status == KinematicsStatus::Ok) {
+        printTcpPose(fk_result.value);
+    } else {
+        Serial.print("FK failed status=");
+        Serial.println(static_cast<int>(fk_result.status));
+    }
 }
 
 void printJointState(uint8_t joint_index, const JointCalibration &joint) {
@@ -41,6 +58,17 @@ void printJointState(uint8_t joint_index, const JointCalibration &joint) {
     Serial.print(joint.pwm_zero_us);
     Serial.print(" angle_zero_rad=");
     Serial.println(joint.angle_zero_rad, 6);
+}
+
+void printTcpPose(const TcpPose &pose) {
+    Serial.print("FK TCP x_m=");
+    Serial.print(pose.position.x_m, 6);
+    Serial.print(" y_m=");
+    Serial.print(pose.position.y_m, 6);
+    Serial.print(" z_m=");
+    Serial.print(pose.position.z_m, 6);
+    Serial.print(" yaw_rad=");
+    Serial.println(pose.yaw_rad, 6);
 }
 
 void loop() {

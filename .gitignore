@@ -59,3 +59,6 @@ _autosave-*
 *.kicad_pro-bak
 *.kicad_sch-bak
 *.kicad_pcb-bak
+
+# Local planning notes
+.plans/
