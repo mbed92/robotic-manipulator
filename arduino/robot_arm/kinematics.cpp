@@ -242,8 +242,8 @@ KinematicsResult<TcpPose> forwardKinematics(
  * Inverse kinematics implementation.
  *
  * The IK solution is computed using a geometric approach. The TCP position is
- * solved as a planar 2-link arm: l2 is the proximal link and l3+l4+l5 is the
- * effective distal link.
+ * solved as a planar 2-link arm: l2 is the proximal link and the fixed J3 pitch
+ * determines the effective distal link from J2 to the TCP.
  * Finally, the base angle follows the target TCP yaw and the J4 angle is kept
  * at HOME because it is independent of the TCP pose.
  *
@@ -259,9 +259,9 @@ KinematicsResult<TcpPose> forwardKinematics(
  * around the vertical axis, and J4 rotates the wrist around the local vertical axis at
  * the end of the arm. The TCP pose convention is planar reach, height, and yaw.
  *
- * The IK solution does not infer J4 from the TCP pose. Multiple J4 angles can
- * result in the same TCP pose, so J4 follows the HOME value while respecting
- * joint limits.
+ * The IK solution does not infer J3 or J4 from the TCP pose. J3 is an explicit
+ * user command that changes the solved geometry, and J4 follows the HOME value
+ * while respecting joint limits.
  */
 
 static bool solvePlanarTwoLink(
@@ -315,19 +315,31 @@ static bool solvePlanarTwoLink(
 static bool buildIkCandidate(
     const TcpPose &target_pose,
     const JointOffsets &offsets,
+    float fixed_j3_rad,
     float j4_rad_from_home,
     bool elbow_positive,
     ArmJointAngles &candidate) {
 
     const float target_r_m = target_pose.reach_x_m;
     const float target_z_m = target_pose.reach_z_m - offsets.l1_m;
-    const float distal_link_m = offsets.l3_m + offsets.l4_m + offsets.l5_m;
+    const float tcp_offset_m = offsets.l4_m + offsets.l5_m;
+    const float distal_r_at_zero_m = offsets.l3_m + tcp_offset_m * cos(fixed_j3_rad);
+    const float distal_z_at_zero_m = tcp_offset_m * sin(fixed_j3_rad);
+    const float distal_link_m = sqrt(
+        distal_r_at_zero_m * distal_r_at_zero_m +
+        distal_z_at_zero_m * distal_z_at_zero_m);
+    if (distal_link_m < IK_EPSILON_M) {
+        return false;
+    }
+
+    const float distal_pitch_offset_rad = atan2(distal_z_at_zero_m, distal_r_at_zero_m);
 
     // Compute the shoulder and elbow angles using the planar 2-link IK solution
-    // for l2 and the effective distal link. J3 remains neutral, so the final TCP
-    // pitch is a direct result of the solved TCP position.
+    // for l2 and the effective distal link. The fixed J3 pitch changes the
+    // effective distal link length and angular offset, so convert the solved
+    // effective-link joint angle back to the real J2 angle.
     float j1_rad = 0.0f;
-    float j2_rad = 0.0f;
+    float effective_j2_rad = 0.0f;
     if (!solvePlanarTwoLink(
             target_r_m,
             target_z_m,
@@ -335,12 +347,13 @@ static bool buildIkCandidate(
             distal_link_m,
             elbow_positive,
             j1_rad,
-            j2_rad)) {
+            effective_j2_rad)) {
         return false;
     }
 
     const float j0_rad = normalizeAngleRad(target_pose.yaw_rad);
-    const float j3_rad = 0.0f;
+    const float j2_rad = normalizeAngleRad(effective_j2_rad - distal_pitch_offset_rad);
+    const float j3_rad = normalizeAngleRad(fixed_j3_rad);
     const float j4_rad = normalizeAngleRad(j4_rad_from_home);
 
     candidate = {j0_rad, j1_rad, j2_rad, j3_rad, j4_rad};
@@ -349,11 +362,13 @@ static bool buildIkCandidate(
 
 static KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
     const TcpPose &target_pose,
+    float fixed_j3_rad,
     const JointOffsets &offsets) {
     const ArmJointAngles home_angles = robotHomeJointAngles();
     if (!isValidPose(target_pose) ||
         !isValidOffsets(offsets) ||
-        !isValidAngles(home_angles)) {
+        !isValidAngles(home_angles) ||
+        !isFiniteFloat(fixed_j3_rad)) {
         return {KinematicsStatus::InvalidInput, emptyAngles()};
     }
 
@@ -376,6 +391,7 @@ static KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
         if (!buildIkCandidate(
                 target_pose,
                 offsets,
+                fixed_j3_rad,
                 home_angles.j4_rad,
                 elbow == 1,
                 candidate)) {
@@ -414,5 +430,16 @@ KinematicsResult<ArmJointAngles> inverseKinematicsPositionYaw(
     const JointOffsets &offsets) {
     return inverseKinematicsPositionYawInternal(
         target_pose,
+        ROBOT_HOME_J3_RAD,
+        offsets);
+}
+
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawPitch(
+    const TcpPose &target_pose,
+    float j3_rad,
+    const JointOffsets &offsets) {
+    return inverseKinematicsPositionYawInternal(
+        target_pose,
+        j3_rad,
         offsets);
 }
