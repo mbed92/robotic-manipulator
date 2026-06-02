@@ -4,8 +4,6 @@
 
 constexpr float FULL_TURN_RAD = 6.28318530718f;
 constexpr float IK_EPSILON_M = 0.000001f;
-constexpr float TCP_YAW_EPSILON_RAD = 0.0001f;
-constexpr float DEFAULT_TCP_OFFSET_PITCH_RAD = 0.0f;
 
 static bool isFiniteFloat(float value) {
     return !isnan(value) && !isinf(value);
@@ -28,17 +26,9 @@ static bool isValidAngles(const ArmJointAngles &angles) {
 }
 
 static bool isValidPose(const TcpPose &pose) {
-    return isFiniteFloat(pose.position.x_m) &&
-           isFiniteFloat(pose.position.y_m) &&
-           isFiniteFloat(pose.position.z_m) &&
+    return isFiniteFloat(pose.reach_x_m) &&
+           isFiniteFloat(pose.reach_z_m) &&
            isFiniteFloat(pose.yaw_rad);
-}
-
-static float tcpYawFromPositionRad(const Vector3 &position) {
-    const float target_r_m = sqrt(
-        position.x_m * position.x_m +
-        position.y_m * position.y_m);
-    return target_r_m <= IK_EPSILON_M ? 0.0f : atan2(position.y_m, position.x_m);
 }
 
 static float normalizeAngleRad(float angle_rad) {
@@ -139,7 +129,7 @@ static ArmJointAngles emptyAngles() {
 }
 
 static TcpPose emptyPose() {
-    return {{0.0f, 0.0f, 0.0f}, 0.0f};
+    return {0.0f, 0.0f, 0.0f};
 }
 
 KinematicsResult<uint16_t> jointAngleToPwmUs(
@@ -213,8 +203,9 @@ KinematicsResult<ArmJointPwmUs> jointAnglesToPwmUs(
  * around the vertical axis, and J4 rotates the wrist around the local vertical axis at
  * the end of the arm.
  *
- * The reported TCP pose is represented as XYZ position and yaw resulting from J0.
- * J4 is independent local wrist rotation and does not change the reported TCP pose.
+ * The reported TCP pose is represented as planar reach, height, and yaw
+ * resulting from J0. J4 is independent local wrist rotation and does not
+ * change the reported TCP pose.
  */
 KinematicsResult<TcpPose> forwardKinematics(
     const ArmJointAngles &angles,
@@ -242,14 +233,7 @@ KinematicsResult<TcpPose> forwardKinematics(
         offsets.l4_m * cos(pitch_3) +
         offsets.l5_m * cos(pitch_3);
 
-    TcpPose pose = {
-        {
-            reach_m * cos(angles.j0_rad),
-            reach_m * sin(angles.j0_rad),
-            z_m,
-        },
-        normalizeAngleRad(angles.j0_rad),
-    };
+    TcpPose pose = {reach_m, z_m, normalizeAngleRad(angles.j0_rad)};
 
     return {KinematicsStatus::Ok, pose};
 }
@@ -257,12 +241,11 @@ KinematicsResult<TcpPose> forwardKinematics(
 /*
  * Inverse kinematics implementation.
  *
- * The IK solution is computed using a geometric approach. The wrist position is
- * computed from the target TCP pose and the final TCP offset length, and then the shoulder
- * and elbow angles are computed using the planar 2-link IK solution for the arm.
- * Finally, the base angle is computed from the target TCP position and the
- * J4 angle is kept at the seed or HOME value because it is independent of
- * the TCP pose.
+ * The IK solution is computed using a geometric approach. The TCP position is
+ * solved as a planar 2-link arm: l2 is the proximal link and l3+l4+l5 is the
+ * effective distal link.
+ * Finally, the base angle follows the target TCP yaw and the J4 angle is kept
+ * at the seed or HOME value because it is independent of the TCP pose.
  *
  * Both elbow configurations are computed when valid, and the one closest to the
  * provided seed or HOME configuration is selected. Joint limits are checked for
@@ -274,8 +257,7 @@ KinematicsResult<TcpPose> forwardKinematics(
  * The IK convention is that all joints at 0 radians point straight up, so the arm
  * extends in the positive Z direction when all angles are zero. J0 rotates the arm
  * around the vertical axis, and J4 rotates the wrist around the local vertical axis at
- * the end of the arm. The TCP pose convention is XYZ position and yaw following
- * J0.
+ * the end of the arm. The TCP pose convention is planar reach, height, and yaw.
  *
  * The provided seed angles must be within joint limits. If a seed is provided but
  * invalid, an error status is returned. If no seed is provided, HOME configuration
@@ -337,38 +319,32 @@ static bool solvePlanarTwoLink(
 static bool buildIkCandidate(
     const TcpPose &target_pose,
     const JointOffsets &offsets,
-    float tcp_fixed_pitch_rad,
     float j4_rad_from_seed,
     bool elbow_positive,
     ArmJointAngles &candidate) {
 
-    // Compute the wrist position from the target TCP pose and the final TCP offset length.
-    // The wrist position is the position of the joint before the final TCP offset,
-    // using the configured fixed TCP pitch convention.
-    const float target_r_m = sqrt(target_pose.position.x_m * target_pose.position.x_m + target_pose.position.y_m * target_pose.position.y_m);
-    const float target_z_m = target_pose.position.z_m - offsets.l1_m;
-    const float tcp_offset_length_m = offsets.l4_m + offsets.l5_m;
-    const float wrist_r_m = target_r_m - tcp_offset_length_m * sin(tcp_fixed_pitch_rad);
-    const float wrist_z_m = target_z_m - tcp_offset_length_m * cos(tcp_fixed_pitch_rad);
+    const float target_r_m = target_pose.reach_x_m;
+    const float target_z_m = target_pose.reach_z_m - offsets.l1_m;
+    const float distal_link_m = offsets.l3_m + offsets.l4_m + offsets.l5_m;
 
-    // Compute the shoulder and elbow angles using the planar 2-link IK solution for the arm.
+    // Compute the shoulder and elbow angles using the planar 2-link IK solution
+    // for l2 and the effective distal link. J3 remains neutral, so the final TCP
+    // pitch is a direct result of the solved TCP position.
     float j1_rad = 0.0f;
     float j2_rad = 0.0f;
     if (!solvePlanarTwoLink(
-            wrist_r_m,
-            wrist_z_m,
+            target_r_m,
+            target_z_m,
             offsets.l2_m,
-            offsets.l3_m,
+            distal_link_m,
             elbow_positive,
             j1_rad,
             j2_rad)) {
         return false;
     }
 
-    // Compute the base angle from the target TCP position. The TCP yaw is reported
-    // from J0, so it is validated by FK rather than used as an independent command.
-    const float j0_rad = target_r_m <= IK_EPSILON_M ? 0.0f : atan2(target_pose.position.y_m, target_pose.position.x_m);
-    const float j3_rad = normalizeAngleRad(tcp_fixed_pitch_rad - j1_rad - j2_rad);
+    const float j0_rad = normalizeAngleRad(target_pose.yaw_rad);
+    const float j3_rad = 0.0f;
     const float j4_rad = normalizeAngleRad(j4_rad_from_seed);
 
     candidate = {j0_rad, j1_rad, j2_rad, j3_rad, j4_rad};
@@ -377,26 +353,18 @@ static bool buildIkCandidate(
 
 static KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
     const TcpPose &target_pose,
-    float tcp_offset_pitch_rad,
     const ArmJointAngles *seed_angles,
     const JointOffsets &offsets) {
     const ArmJointAngles home_angles = robotHomeJointAngles();
     if (!isValidPose(target_pose) ||
         !isValidOffsets(offsets) ||
-        !isValidAngles(home_angles) ||
-        !isFiniteFloat(tcp_offset_pitch_rad)) {
+        !isValidAngles(home_angles)) {
         return {KinematicsStatus::InvalidInput, emptyAngles()};
     }
 
     // Check reachability before computing IK candidates to avoid unnecessary calculations.
-    const float target_r_m = sqrt(
-        target_pose.position.x_m * target_pose.position.x_m +
-        target_pose.position.y_m * target_pose.position.y_m);
-    if (fabs(angleDistanceRad(target_pose.yaw_rad, tcpYawFromPositionRad(target_pose.position))) > TCP_YAW_EPSILON_RAD) {
-        return {KinematicsStatus::InvalidInput, emptyAngles()};
-    }
-
-    const float target_z_m = target_pose.position.z_m - offsets.l1_m;
+    const float target_r_m = target_pose.reach_x_m;
+    const float target_z_m = target_pose.reach_z_m - offsets.l1_m;
     const float max_reach_m = offsets.l2_m + offsets.l3_m + offsets.l4_m + offsets.l5_m;
     if (sqrt(target_r_m * target_r_m + target_z_m * target_z_m) > max_reach_m + IK_EPSILON_M) {
         return {KinematicsStatus::OutOfReach, emptyAngles()};
@@ -414,7 +382,6 @@ static KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
         if (!buildIkCandidate(
                 target_pose,
                 offsets,
-                tcp_offset_pitch_rad,
                 reference_angles.j4_rad,
                 elbow == 1,
                 candidate)) {
@@ -453,7 +420,6 @@ KinematicsResult<ArmJointAngles> inverseKinematicsPositionYaw(
     const JointOffsets &offsets) {
     return inverseKinematicsPositionYawInternal(
         target_pose,
-        DEFAULT_TCP_OFFSET_PITCH_RAD,
         nullptr,
         offsets);
 }
@@ -468,34 +434,6 @@ KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawSeeded(
 
     return inverseKinematicsPositionYawInternal(
         target_pose,
-        DEFAULT_TCP_OFFSET_PITCH_RAD,
-        &seed_angles,
-        offsets);
-}
-
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawTcpOffsetPitch(
-    const TcpPose &target_pose,
-    float tcp_offset_pitch_rad,
-    const JointOffsets &offsets) {
-    return inverseKinematicsPositionYawInternal(
-        target_pose,
-        tcp_offset_pitch_rad,
-        nullptr,
-        offsets);
-}
-
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawTcpOffsetPitchSeeded(
-    const TcpPose &target_pose,
-    float tcp_offset_pitch_rad,
-    const ArmJointAngles &seed_angles,
-    const JointOffsets &offsets) {
-    if (!isValidAngles(seed_angles)) {
-        return {KinematicsStatus::InvalidInput, emptyAngles()};
-    }
-
-    return inverseKinematicsPositionYawInternal(
-        target_pose,
-        tcp_offset_pitch_rad,
         &seed_angles,
         offsets);
 }

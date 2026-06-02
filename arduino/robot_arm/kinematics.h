@@ -5,14 +5,10 @@
 
 #include "robot_calibration.h"
 
-struct Vector3 {
-    float x_m;
-    float y_m;
-    float z_m;
-};
-
 struct TcpPose {
-    Vector3 position;
+    // Planar arm target in the local J0 frame. Lateral motion is commanded by yaw_rad.
+    float reach_x_m;
+    float reach_z_m;
     float yaw_rad;
 };
 
@@ -58,17 +54,6 @@ KinematicsResult<ArmJointAngles> inverseKinematicsPositionYaw(
 
 KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawSeeded(
     const TcpPose &target_pose,
-    const ArmJointAngles &seed_angles,
-    const JointOffsets &offsets = JOINT_OFFSETS);
-
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawTcpOffsetPitch(
-    const TcpPose &target_pose,
-    float tcp_offset_pitch_rad,
-    const JointOffsets &offsets = JOINT_OFFSETS);
-
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawTcpOffsetPitchSeeded(
-    const TcpPose &target_pose,
-    float tcp_offset_pitch_rad,
     const ArmJointAngles &seed_angles,
     const JointOffsets &offsets = JOINT_OFFSETS);
 

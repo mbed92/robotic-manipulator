@@ -129,12 +129,10 @@ void printArmJointAngles(const ArmJointAngles &angles) {
 }
 
 void printTcpPose(const TcpPose &pose) {
-    Serial.print("FK TCP x_m=");
-    Serial.print(pose.position.x_m, 6);
-    Serial.print(" y_m=");
-    Serial.print(pose.position.y_m, 6);
-    Serial.print(" z_m=");
-    Serial.print(pose.position.z_m, 6);
+    Serial.print("FK TCP reach_x_m=");
+    Serial.print(pose.reach_x_m, 6);
+    Serial.print(" reach_z_m=");
+    Serial.print(pose.reach_z_m, 6);
     Serial.print(" yaw_rad=");
     Serial.println(pose.yaw_rad, 6);
 }
@@ -168,8 +166,6 @@ bool verifyHomeFkPose(
         offsets.l3_m * sin(pitch_2) +
         offsets.l4_m * sin(pitch_3) +
         offsets.l5_m * sin(pitch_3);
-    const float expected_x_m = expected_reach_m * cos(home_angles.j0_rad);
-    const float expected_y_m = expected_reach_m * sin(home_angles.j0_rad);
     const float expected_z_m =
         offsets.l1_m +
         offsets.l2_m * cos(pitch_1) +
@@ -177,9 +173,8 @@ bool verifyHomeFkPose(
         offsets.l4_m * cos(pitch_3) +
         offsets.l5_m * cos(pitch_3);
 
-    return absFloat(pose.position.x_m - expected_x_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
-           absFloat(pose.position.y_m - expected_y_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
-           absFloat(pose.position.z_m - expected_z_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
+    return absFloat(pose.reach_x_m - expected_reach_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
+           absFloat(pose.reach_z_m - expected_z_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
            absFloat(angleDistanceRad(pose.yaw_rad, home_angles.j0_rad)) <= ZERO_FK_ORIENTATION_TOLERANCE_RAD;
 }
 
