@@ -245,27 +245,23 @@ KinematicsResult<TcpPose> forwardKinematics(
  * solved as a planar 2-link arm: l2 is the proximal link and l3+l4+l5 is the
  * effective distal link.
  * Finally, the base angle follows the target TCP yaw and the J4 angle is kept
- * at the seed or HOME value because it is independent of the TCP pose.
+ * at HOME because it is independent of the TCP pose.
  *
  * Both elbow configurations are computed when valid, and the one closest to the
- * provided seed or HOME configuration is selected. Joint limits are checked for
- * both configurations, and if both are valid, the nearest one to the seed or HOME
- * is returned. If only one is valid, it is returned. If neither is valid, an error
- * status is returned indicating whether the target was out of reach or if there
- * was a joint limit violation.
+ * HOME configuration is selected. Joint limits are checked for both
+ * configurations, and if both are valid, the nearest one to HOME is returned. If
+ * only one is valid, it is returned. If neither is valid, an error status is
+ * returned indicating whether the target was out of reach or if there was a joint
+ * limit violation.
  *
  * The IK convention is that all joints at 0 radians point straight up, so the arm
  * extends in the positive Z direction when all angles are zero. J0 rotates the arm
  * around the vertical axis, and J4 rotates the wrist around the local vertical axis at
  * the end of the arm. The TCP pose convention is planar reach, height, and yaw.
  *
- * The provided seed angles must be within joint limits. If a seed is provided but
- * invalid, an error status is returned. If no seed is provided, HOME configuration
- * is used as the reference for selecting between multiple IK solutions.
- *
  * The IK solution does not infer J4 from the TCP pose. Multiple J4 angles can
- * result in the same TCP pose, so J4 follows the seed or HOME value while
- * respecting joint limits.
+ * result in the same TCP pose, so J4 follows the HOME value while respecting
+ * joint limits.
  */
 
 static bool solvePlanarTwoLink(
@@ -319,7 +315,7 @@ static bool solvePlanarTwoLink(
 static bool buildIkCandidate(
     const TcpPose &target_pose,
     const JointOffsets &offsets,
-    float j4_rad_from_seed,
+    float j4_rad_from_home,
     bool elbow_positive,
     ArmJointAngles &candidate) {
 
@@ -345,7 +341,7 @@ static bool buildIkCandidate(
 
     const float j0_rad = normalizeAngleRad(target_pose.yaw_rad);
     const float j3_rad = 0.0f;
-    const float j4_rad = normalizeAngleRad(j4_rad_from_seed);
+    const float j4_rad = normalizeAngleRad(j4_rad_from_home);
 
     candidate = {j0_rad, j1_rad, j2_rad, j3_rad, j4_rad};
     return isValidAngles(candidate);
@@ -353,7 +349,6 @@ static bool buildIkCandidate(
 
 static KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
     const TcpPose &target_pose,
-    const ArmJointAngles *seed_angles,
     const JointOffsets &offsets) {
     const ArmJointAngles home_angles = robotHomeJointAngles();
     if (!isValidPose(target_pose) ||
@@ -371,18 +366,17 @@ static KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
     }
 
     // Compute both elbow configurations and select the nearest valid candidate
-    // to the seed when provided, otherwise to the configured HOME pose.
+    // to the configured HOME pose.
     ArmJointAngles best_angles = emptyAngles();
     float best_distance = 3.402823466e+38f;
     bool has_candidate = false;
     bool has_geometric_candidate = false;
-    const ArmJointAngles reference_angles = seed_angles == nullptr ? home_angles : *seed_angles;
     for (uint8_t elbow = 0; elbow < 2; ++elbow) {
         ArmJointAngles candidate = emptyAngles();
         if (!buildIkCandidate(
                 target_pose,
                 offsets,
-                reference_angles.j4_rad,
+                home_angles.j4_rad,
                 elbow == 1,
                 candidate)) {
             continue;
@@ -395,7 +389,7 @@ static KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
         }
 
         // This candidate is valid, check if it's the best one we've found so far.
-        const float distance = jointDistanceSquared(candidate, reference_angles);
+        const float distance = jointDistanceSquared(candidate, home_angles);
         if (!has_candidate || distance < best_distance) {
             best_angles = candidate;
             best_distance = distance;
@@ -420,20 +414,5 @@ KinematicsResult<ArmJointAngles> inverseKinematicsPositionYaw(
     const JointOffsets &offsets) {
     return inverseKinematicsPositionYawInternal(
         target_pose,
-        nullptr,
-        offsets);
-}
-
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawSeeded(
-    const TcpPose &target_pose,
-    const ArmJointAngles &seed_angles,
-    const JointOffsets &offsets) {
-    if (!isValidAngles(seed_angles)) {
-        return {KinematicsStatus::InvalidInput, emptyAngles()};
-    }
-
-    return inverseKinematicsPositionYawInternal(
-        target_pose,
-        &seed_angles,
         offsets);
 }
