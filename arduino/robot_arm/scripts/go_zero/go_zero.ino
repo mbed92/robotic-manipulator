@@ -5,6 +5,7 @@
  */
 
 #include <Wire.h>
+#include <math.h>
 
 #include "kinematics.h"
 #include "pca9685_servo_driver.h"
@@ -13,6 +14,7 @@
 constexpr float ZERO_ANGLE_TOLERANCE_RAD = 0.000001f;
 constexpr float ZERO_FK_POSITION_TOLERANCE_M = 0.000001f;
 constexpr float ZERO_FK_ORIENTATION_TOLERANCE_RAD = 0.000001f;
+constexpr float HOME_ROUND_TRIP_TOLERANCE_RAD = 0.03f;
 
 Pca9685ServoDriver servo_driver;
 
@@ -20,8 +22,13 @@ void printJointState(uint8_t joint_index, const JointCalibration &joint);
 void printArmJointAngles(const ArmJointAngles &angles);
 void printTcpPose(const TcpPose &pose);
 bool verifyZeroArmAngles(const ArmJointAngles &angles);
-bool verifyZeroFkPose(const TcpPose &pose, const JointOffsets &offsets = JOINT_OFFSETS);
+bool verifyHomeArmAngles(const ArmJointAngles &angles);
+bool verifyHomeFkPose(
+    const TcpPose &pose,
+    const ArmJointAngles &home_angles,
+    const JointOffsets &offsets = JOINT_OFFSETS);
 float absFloat(float value);
+float angleDistanceRad(float a_rad, float b_rad);
 
 void setup() {
     Serial.begin(115200);
@@ -42,37 +49,43 @@ void setup() {
     Serial.println("All servos set to zero positions");
 
     // J0-J4 define the arm TCP pose. J5 is the gripper and is not part of FK/IK.
-    const ArmJointAngles target_angles = {
+    const ArmJointAngles zero_angles = {
         JOINT_CALIBRATIONS[0].angle_zero_rad,
         JOINT_CALIBRATIONS[1].angle_zero_rad,
         JOINT_CALIBRATIONS[2].angle_zero_rad,
         JOINT_CALIBRATIONS[3].angle_zero_rad,
         JOINT_CALIBRATIONS[4].angle_zero_rad,
     };
+    const ArmJointAngles home_angles = robotHomeJointAngles();
 
-    if (verifyZeroArmAngles(target_angles)) {
+    Serial.print("Calibration zero ");
+    printArmJointAngles(zero_angles);
+    Serial.print("Configured HOME ");
+    printArmJointAngles(home_angles);
+
+    if (verifyZeroArmAngles(zero_angles)) {
         Serial.println("Arm joint zero-angle verification OK");
     } else {
         Serial.println("Arm joint zero-angle verification FAILED");
     }
 
-    const KinematicsResult<TcpPose> fk_result = forwardKinematics(target_angles);
+    const KinematicsResult<TcpPose> fk_result = forwardKinematics(home_angles);
     if (fk_result.status == KinematicsStatus::Ok) {
         printTcpPose(fk_result.value);
-        if (verifyZeroFkPose(fk_result.value)) {
-            Serial.println("FK zero-pose verification OK");
+        if (verifyHomeFkPose(fk_result.value, home_angles)) {
+            Serial.println("FK HOME-pose verification OK");
         } else {
-            Serial.println("FK zero-pose verification FAILED");
+            Serial.println("FK HOME-pose verification FAILED");
         }
 
         const KinematicsResult<ArmJointAngles> ik_result =
-            inverseKinematicsPositionPitchYaw(fk_result.value);
+            inverseKinematicsPositionYaw(fk_result.value);
         if (ik_result.status == KinematicsStatus::Ok) {
             printArmJointAngles(ik_result.value);
-            if (verifyZeroArmAngles(ik_result.value)) {
-                Serial.println("FK-to-IK zero-joint verification OK");
+            if (verifyHomeArmAngles(ik_result.value)) {
+                Serial.println("FK-to-IK HOME-joint verification OK");
             } else {
-                Serial.println("FK-to-IK zero-joint verification FAILED");
+                Serial.println("FK-to-IK HOME-joint verification FAILED");
             }
         } else {
             Serial.print("FK-to-IK verification failed status=");
@@ -121,10 +134,8 @@ void printTcpPose(const TcpPose &pose) {
     Serial.print(pose.position.y_m, 6);
     Serial.print(" z_m=");
     Serial.print(pose.position.z_m, 6);
-    Serial.print(" tool_pitch_rad=");
-    Serial.print(pose.tool_pitch_rad, 6);
-    Serial.print(" tool_yaw_rad=");
-    Serial.println(pose.tool_yaw_rad, 6);
+    Serial.print(" yaw_rad=");
+    Serial.println(pose.yaw_rad, 6);
 }
 
 bool verifyZeroArmAngles(const ArmJointAngles &angles) {
@@ -135,23 +146,55 @@ bool verifyZeroArmAngles(const ArmJointAngles &angles) {
            absFloat(angles.j4_rad) <= ZERO_ANGLE_TOLERANCE_RAD;
 }
 
-bool verifyZeroFkPose(const TcpPose &pose, const JointOffsets &offsets) {
+bool verifyHomeArmAngles(const ArmJointAngles &angles) {
+    const ArmJointAngles home_angles = robotHomeJointAngles();
+    return absFloat(angleDistanceRad(angles.j0_rad, home_angles.j0_rad)) <= HOME_ROUND_TRIP_TOLERANCE_RAD &&
+           absFloat(angleDistanceRad(angles.j1_rad, home_angles.j1_rad)) <= HOME_ROUND_TRIP_TOLERANCE_RAD &&
+           absFloat(angleDistanceRad(angles.j2_rad, home_angles.j2_rad)) <= HOME_ROUND_TRIP_TOLERANCE_RAD &&
+           absFloat(angleDistanceRad(angles.j3_rad, home_angles.j3_rad)) <= HOME_ROUND_TRIP_TOLERANCE_RAD &&
+           absFloat(angleDistanceRad(angles.j4_rad, home_angles.j4_rad)) <= HOME_ROUND_TRIP_TOLERANCE_RAD;
+}
+
+bool verifyHomeFkPose(
+    const TcpPose &pose,
+    const ArmJointAngles &home_angles,
+    const JointOffsets &offsets) {
+    const float pitch_1 = home_angles.j1_rad;
+    const float pitch_2 = pitch_1 + home_angles.j2_rad;
+    const float pitch_3 = pitch_2 + home_angles.j3_rad;
+    const float expected_reach_m =
+        offsets.l2_m * sin(pitch_1) +
+        offsets.l3_m * sin(pitch_2) +
+        offsets.l4_m * sin(pitch_3) +
+        offsets.l5_m * sin(pitch_3);
+    const float expected_x_m = expected_reach_m * cos(home_angles.j0_rad);
+    const float expected_y_m = expected_reach_m * sin(home_angles.j0_rad);
     const float expected_z_m =
         offsets.l1_m +
-        offsets.l2_m +
-        offsets.l3_m +
-        offsets.l4_m +
-        offsets.l5_m;
+        offsets.l2_m * cos(pitch_1) +
+        offsets.l3_m * cos(pitch_2) +
+        offsets.l4_m * cos(pitch_3) +
+        offsets.l5_m * cos(pitch_3);
 
-    return absFloat(pose.position.x_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
-           absFloat(pose.position.y_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
+    return absFloat(pose.position.x_m - expected_x_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
+           absFloat(pose.position.y_m - expected_y_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
            absFloat(pose.position.z_m - expected_z_m) <= ZERO_FK_POSITION_TOLERANCE_M &&
-           absFloat(pose.tool_pitch_rad) <= ZERO_FK_ORIENTATION_TOLERANCE_RAD &&
-           absFloat(pose.tool_yaw_rad) <= ZERO_FK_ORIENTATION_TOLERANCE_RAD;
+           absFloat(angleDistanceRad(pose.yaw_rad, home_angles.j0_rad)) <= ZERO_FK_ORIENTATION_TOLERANCE_RAD;
 }
 
 float absFloat(float value) {
     return value < 0.0f ? -value : value;
+}
+
+float angleDistanceRad(float a_rad, float b_rad) {
+    float delta_rad = a_rad - b_rad;
+    while (delta_rad > PI) {
+        delta_rad -= 2.0f * PI;
+    }
+    while (delta_rad < -PI) {
+        delta_rad += 2.0f * PI;
+    }
+    return delta_rad;
 }
 
 void loop() {

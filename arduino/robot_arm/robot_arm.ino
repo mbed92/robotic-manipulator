@@ -1,8 +1,10 @@
 /**
- * Simple Cartesian trajectory demo.
+ * Simple front-facing Cartesian line trajectory demo.
  *
- * setup() computes Cartesian trajectory segments between two TCP poses.
+ * setup() computes Cartesian trajectory segments between two TCP positions.
  * loop() executes the precomputed waypoints one by one with a fixed delay.
+ * The path stays in the front plane (Y=0). J4 is independent of the TCP pose
+ * and follows the IK seed.
  * J5 is the gripper and is left at its configured zero PWM.
  */
 
@@ -18,14 +20,12 @@ constexpr uint8_t TRAJECTORY_WAYPOINT_COUNT = TRAJECTORY_SEGMENT_COUNT + 1;
 constexpr uint16_t TRAJECTORY_STEP_DELAY_MS = 2000;
 
 const TcpPose START_POSE = {
-    {0.02f, 0.0f, 0.455f},
-    1.57f,
+    {0.08f, 0.0f, 0.4425f},
     0.0f,
 };
 
 const TcpPose END_POSE = {
-    {0.02f, 0.0f, 0.455f},
-    0.0f,
+    {0.08f, 0.0f, 0.4025f},
     0.0f,
 };
 
@@ -38,14 +38,10 @@ bool trajectory_ready = false;
 bool trajectory_finished = false;
 
 TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, float alpha);
-float normalizeDemoAngleRad(float angle_rad);
 bool computeTrajectory();
 bool computeWaypoint(uint8_t waypoint_index, const TcpPose &pose, ArmJointAngles &seed_angles);
 void executeWaypoint(uint8_t waypoint_index);
-void setArmPwm(const ArmJointPwmUs &pwm_us);
 void setGripperZero();
-void printPose(const TcpPose &pose);
-void printAngles(const ArmJointAngles &angles);
 
 void setup() {
     Serial.begin(115200);
@@ -85,22 +81,24 @@ void loop() {
 }
 
 bool computeTrajectory() {
-    KinematicsResult<ArmJointAngles> start_ik =
-        inverseKinematicsPositionPitchYaw(START_POSE);
+    KinematicsResult<ArmJointAngles> start_ik = inverseKinematicsPositionYaw(START_POSE);
     if (start_ik.status != KinematicsStatus::Ok) {
         Serial.print("Start pose IK failed status=");
         Serial.println(static_cast<int>(start_ik.status));
         return false;
     }
 
+    // Seed the first waypoint IK with the start pose solution, then seed each
+    // subsequent waypoint with the previous one to improve the chances of a
+    // valid solution and a smooth trajectory.
     ArmJointAngles seed_angles = start_ik.value;
-
     for (uint8_t i = 0; i < TRAJECTORY_WAYPOINT_COUNT; ++i) {
-        const float alpha =
-            static_cast<float>(i) / static_cast<float>(TRAJECTORY_SEGMENT_COUNT);
+        const float alpha = static_cast<float>(i) / static_cast<float>(TRAJECTORY_SEGMENT_COUNT);
         const TcpPose pose = interpolatePose(START_POSE, END_POSE, alpha);
 
         if (!computeWaypoint(i, pose, seed_angles)) {
+            Serial.print("Waypoint computation failed index=");
+            Serial.println(i);
             return false;
         }
     }
@@ -109,25 +107,13 @@ bool computeTrajectory() {
 }
 
 bool computeWaypoint(uint8_t waypoint_index, const TcpPose &pose, ArmJointAngles &seed_angles) {
-    const KinematicsResult<ArmJointAngles> ik_result =
-        inverseKinematicsPositionPitchYawSeeded(pose, seed_angles);
+    const KinematicsResult<ArmJointAngles> ik_result = inverseKinematicsPositionYawSeeded(pose, seed_angles);
     if (ik_result.status != KinematicsStatus::Ok) {
-        Serial.print("Waypoint IK failed index=");
-        Serial.print(waypoint_index);
-        Serial.print(" status=");
-        Serial.println(static_cast<int>(ik_result.status));
-        printPose(pose);
         return false;
     }
 
-    const KinematicsResult<ArmJointPwmUs> pwm_result =
-        jointAnglesToPwmUs(ik_result.value);
+    const KinematicsResult<ArmJointPwmUs> pwm_result = jointAnglesToPwmUs(ik_result.value, JOINT_CALIBRATIONS);
     if (pwm_result.status != KinematicsStatus::Ok) {
-        Serial.print("Waypoint PWM conversion failed index=");
-        Serial.print(waypoint_index);
-        Serial.print(" status=");
-        Serial.println(static_cast<int>(pwm_result.status));
-        printAngles(ik_result.value);
         return false;
     }
 
@@ -144,86 +130,37 @@ void executeWaypoint(uint8_t waypoint_index) {
     Serial.print("/");
     Serial.println(TRAJECTORY_SEGMENT_COUNT);
 
-    printPose(trajectory_poses[waypoint_index]);
-    printAngles(trajectory_angles[waypoint_index]);
-    setArmPwm(trajectory_pwm[waypoint_index]);
-}
-
-TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, float alpha) {
-    const float tool_pitch_delta_rad =
-        normalizeDemoAngleRad(end_pose.tool_pitch_rad - start_pose.tool_pitch_rad);
-    const float tool_yaw_delta_rad = normalizeDemoAngleRad(end_pose.tool_yaw_rad - start_pose.tool_yaw_rad);
-    return {
-        {
-            start_pose.position.x_m +
-                alpha * (end_pose.position.x_m - start_pose.position.x_m),
-            start_pose.position.y_m +
-                alpha * (end_pose.position.y_m - start_pose.position.y_m),
-            start_pose.position.z_m +
-                alpha * (end_pose.position.z_m - start_pose.position.z_m),
-        },
-        normalizeDemoAngleRad(start_pose.tool_pitch_rad + alpha * tool_pitch_delta_rad),
-        normalizeDemoAngleRad(start_pose.tool_yaw_rad + alpha * tool_yaw_delta_rad),
-    };
-}
-
-float normalizeDemoAngleRad(float angle_rad) {
-    while (angle_rad > PI) {
-        angle_rad -= 2.0f * PI;
-    }
-    while (angle_rad < -PI) {
-        angle_rad += 2.0f * PI;
-    }
-    return angle_rad;
-}
-
-void setArmPwm(const ArmJointPwmUs &pwm_us) {
     const uint16_t pwm_values[ROBOT_KINEMATIC_JOINT_COUNT] = {
-        pwm_us.j0_us,
-        pwm_us.j1_us,
-        pwm_us.j2_us,
-        pwm_us.j3_us,
-        pwm_us.j4_us,
+        trajectory_pwm[waypoint_index].j0_us,
+        trajectory_pwm[waypoint_index].j1_us,
+        trajectory_pwm[waypoint_index].j2_us,
+        trajectory_pwm[waypoint_index].j3_us,
+        trajectory_pwm[waypoint_index].j4_us,
     };
 
     for (uint8_t i = 0; i < ROBOT_KINEMATIC_JOINT_COUNT; ++i) {
-        servo_driver.setServoUs(JOINT_CALIBRATIONS[i].channel, pwm_values[i]);
-        Serial.print("J");
-        Serial.print(i + 1);
-        Serial.print(" pwm_us=");
-        Serial.println(pwm_values[i]);
+        servo_driver.setServoUs(
+            JOINT_CALIBRATIONS[i].channel,
+            pwm_values[i]);
     }
+}
+
+TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, float alpha) {
+    const Vector3 position = {
+        start_pose.position.x_m + alpha * (end_pose.position.x_m - start_pose.position.x_m),
+        start_pose.position.y_m + alpha * (end_pose.position.y_m - start_pose.position.y_m),
+        start_pose.position.z_m + alpha * (end_pose.position.z_m - start_pose.position.z_m),
+    };
+
+    const float target_r_m = sqrt(position.x_m * position.x_m + position.y_m * position.y_m);
+    const float target_yaw_rad = target_r_m <= 0.000001f ? 0.0f : atan2(position.y_m, position.x_m);
+    return {
+        position,
+        target_yaw_rad,
+    };
 }
 
 void setGripperZero() {
     const JointCalibration &gripper = JOINT_CALIBRATIONS[ROBOT_GRIPPER_JOINT_INDEX];
     servo_driver.setServoUs(gripper.channel, gripper.pwm_zero_us);
-    Serial.print("J5 gripper pwm_us=");
-    Serial.println(gripper.pwm_zero_us);
-}
-
-void printPose(const TcpPose &pose) {
-    Serial.print("target x_m=");
-    Serial.print(pose.position.x_m, 6);
-    Serial.print(" y_m=");
-    Serial.print(pose.position.y_m, 6);
-    Serial.print(" z_m=");
-    Serial.print(pose.position.z_m, 6);
-    Serial.print(" tool_pitch_rad=");
-    Serial.print(pose.tool_pitch_rad, 6);
-    Serial.print(" tool_yaw_rad=");
-    Serial.println(pose.tool_yaw_rad, 6);
-}
-
-void printAngles(const ArmJointAngles &angles) {
-    Serial.print("angles j0=");
-    Serial.print(angles.j0_rad, 6);
-    Serial.print(" j1=");
-    Serial.print(angles.j1_rad, 6);
-    Serial.print(" j2=");
-    Serial.print(angles.j2_rad, 6);
-    Serial.print(" j3=");
-    Serial.print(angles.j3_rad, 6);
-    Serial.print(" j4=");
-    Serial.println(angles.j4_rad, 6);
 }

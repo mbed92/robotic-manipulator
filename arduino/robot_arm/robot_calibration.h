@@ -30,6 +30,14 @@ constexpr float JOINT_ANGLE_MIN_RAD = -1.57f;
 constexpr float JOINT_ANGLE_ZERO_RAD = 0.0f;
 constexpr float JOINT_ANGLE_MAX_RAD = 1.57f;
 
+constexpr float ROBOT_HOME_J0_RAD = 0.0f;
+constexpr float ROBOT_HOME_J1_RAD = 0.0f;
+constexpr float ROBOT_HOME_J2_RAD = 0.0f;
+constexpr float ROBOT_HOME_J3_RAD = 0.0f;
+constexpr float ROBOT_HOME_J4_RAD = 0.0f;
+
+constexpr float FIXED_TCP_OFFSET_PITCH_RAD = 0.0f;
+
 const JointCalibration JOINT_CALIBRATIONS[ROBOT_TOTAL_JOINT_COUNT] = {
     {0, 600, 1500, 2400, JOINT_ANGLE_MIN_RAD, JOINT_ANGLE_ZERO_RAD, JOINT_ANGLE_MAX_RAD},
     {1, 600, 1500, 2400, JOINT_ANGLE_MIN_RAD, JOINT_ANGLE_ZERO_RAD, JOINT_ANGLE_MAX_RAD},
@@ -42,7 +50,7 @@ const JointCalibration JOINT_CALIBRATIONS[ROBOT_TOTAL_JOINT_COUNT] = {
 // Joint indexing follows the physical robot: J0 base, J1-J3 planar arm,
 // J4 local TCP rotation, J5 gripper.
 // L1 is the vertical distance from J0/base to J1/shoulder. J0 is at 0,0,0.
-// L2-L3-L4 are the planar arm links. L5 is the flange-to-TCP tool length.
+// L2-L3-L4 are the planar arm links. L5 is the final flange-to-TCP offset length.
 // Units: meters.
 const JointOffsets JOINT_OFFSETS = {
     0.0625f,

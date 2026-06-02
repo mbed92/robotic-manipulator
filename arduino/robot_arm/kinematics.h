@@ -13,8 +13,7 @@ struct Vector3 {
 
 struct TcpPose {
     Vector3 position;
-    float tool_pitch_rad;
-    float tool_yaw_rad;
+    float yaw_rad;
 };
 
 struct ArmJointAngles {
@@ -47,15 +46,17 @@ struct KinematicsResult {
     T value;
 };
 
+ArmJointAngles robotHomeJointAngles();
+
 KinematicsResult<TcpPose> forwardKinematics(
     const ArmJointAngles &angles,
     const JointOffsets &offsets = JOINT_OFFSETS);
 
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionPitchYaw(
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionYaw(
     const TcpPose &target_pose,
     const JointOffsets &offsets = JOINT_OFFSETS);
 
-KinematicsResult<ArmJointAngles> inverseKinematicsPositionPitchYawSeeded(
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawSeeded(
     const TcpPose &target_pose,
     const ArmJointAngles &seed_angles,
     const JointOffsets &offsets = JOINT_OFFSETS);
