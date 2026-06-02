@@ -5,6 +5,7 @@
 constexpr float FULL_TURN_RAD = 6.28318530718f;
 constexpr float IK_EPSILON_M = 0.000001f;
 constexpr float TCP_YAW_EPSILON_RAD = 0.0001f;
+constexpr float DEFAULT_TCP_OFFSET_PITCH_RAD = 0.0f;
 
 static bool isFiniteFloat(float value) {
     return !isnan(value) && !isinf(value);
@@ -376,13 +377,14 @@ static bool buildIkCandidate(
 
 static KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
     const TcpPose &target_pose,
+    float tcp_offset_pitch_rad,
     const ArmJointAngles *seed_angles,
     const JointOffsets &offsets) {
     const ArmJointAngles home_angles = robotHomeJointAngles();
     if (!isValidPose(target_pose) ||
         !isValidOffsets(offsets) ||
         !isValidAngles(home_angles) ||
-        !isFiniteFloat(FIXED_TCP_OFFSET_PITCH_RAD)) {
+        !isFiniteFloat(tcp_offset_pitch_rad)) {
         return {KinematicsStatus::InvalidInput, emptyAngles()};
     }
 
@@ -412,7 +414,7 @@ static KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
         if (!buildIkCandidate(
                 target_pose,
                 offsets,
-                FIXED_TCP_OFFSET_PITCH_RAD,
+                tcp_offset_pitch_rad,
                 reference_angles.j4_rad,
                 elbow == 1,
                 candidate)) {
@@ -449,7 +451,11 @@ static KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
 KinematicsResult<ArmJointAngles> inverseKinematicsPositionYaw(
     const TcpPose &target_pose,
     const JointOffsets &offsets) {
-    return inverseKinematicsPositionYawInternal(target_pose, nullptr, offsets);
+    return inverseKinematicsPositionYawInternal(
+        target_pose,
+        DEFAULT_TCP_OFFSET_PITCH_RAD,
+        nullptr,
+        offsets);
 }
 
 KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawSeeded(
@@ -460,5 +466,36 @@ KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawSeeded(
         return {KinematicsStatus::InvalidInput, emptyAngles()};
     }
 
-    return inverseKinematicsPositionYawInternal(target_pose, &seed_angles, offsets);
+    return inverseKinematicsPositionYawInternal(
+        target_pose,
+        DEFAULT_TCP_OFFSET_PITCH_RAD,
+        &seed_angles,
+        offsets);
+}
+
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawTcpOffsetPitch(
+    const TcpPose &target_pose,
+    float tcp_offset_pitch_rad,
+    const JointOffsets &offsets) {
+    return inverseKinematicsPositionYawInternal(
+        target_pose,
+        tcp_offset_pitch_rad,
+        nullptr,
+        offsets);
+}
+
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawTcpOffsetPitchSeeded(
+    const TcpPose &target_pose,
+    float tcp_offset_pitch_rad,
+    const ArmJointAngles &seed_angles,
+    const JointOffsets &offsets) {
+    if (!isValidAngles(seed_angles)) {
+        return {KinematicsStatus::InvalidInput, emptyAngles()};
+    }
+
+    return inverseKinematicsPositionYawInternal(
+        target_pose,
+        tcp_offset_pitch_rad,
+        &seed_angles,
+        offsets);
 }

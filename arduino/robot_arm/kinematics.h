@@ -61,6 +61,17 @@ KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawSeeded(
     const ArmJointAngles &seed_angles,
     const JointOffsets &offsets = JOINT_OFFSETS);
 
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawTcpOffsetPitch(
+    const TcpPose &target_pose,
+    float tcp_offset_pitch_rad,
+    const JointOffsets &offsets = JOINT_OFFSETS);
+
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawTcpOffsetPitchSeeded(
+    const TcpPose &target_pose,
+    float tcp_offset_pitch_rad,
+    const ArmJointAngles &seed_angles,
+    const JointOffsets &offsets = JOINT_OFFSETS);
+
 KinematicsResult<uint16_t> jointAngleToPwmUs(
     uint8_t joint_index,
     float angle_rad,

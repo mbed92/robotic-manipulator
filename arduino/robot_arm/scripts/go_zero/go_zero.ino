@@ -48,7 +48,8 @@ void setup() {
 
     Serial.println("All servos set to zero positions");
 
-    // J0-J4 define the arm TCP pose. J5 is the gripper and is not part of FK/IK.
+    // J0-J3 define the arm TCP pose. J4 is independent wrist rotation.
+    // J5 is the gripper and is not part of FK/IK.
     const ArmJointAngles zero_angles = {
         JOINT_CALIBRATIONS[0].angle_zero_rad,
         JOINT_CALIBRATIONS[1].angle_zero_rad,

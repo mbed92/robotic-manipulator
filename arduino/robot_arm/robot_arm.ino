@@ -3,9 +3,8 @@
  *
  * setup() computes Cartesian trajectory segments between two TCP positions.
  * loop() executes the precomputed waypoints one by one with a fixed delay.
- * The path stays in the front plane (Y=0). J4 is independent of the TCP pose
- * and follows the IK seed.
- * J5 is the gripper and is left at its configured zero PWM.
+ * The path stays in the front plane (Y=0). IK solves J0-J3 from the target
+ * TCP pose and local wrist pitch. J4 and J5 are explicit user commands.
  */
 
 #include <Wire.h>
@@ -19,29 +18,46 @@ constexpr uint8_t TRAJECTORY_SEGMENT_COUNT = 5;
 constexpr uint8_t TRAJECTORY_WAYPOINT_COUNT = TRAJECTORY_SEGMENT_COUNT + 1;
 constexpr uint16_t TRAJECTORY_STEP_DELAY_MS = 2000;
 
-const TcpPose START_POSE = {
-    {0.08f, 0.0f, 0.4425f},
-    0.0f,
+enum class GripperCommand {
+    Closed,
+    Open,
 };
 
-const TcpPose END_POSE = {
-    {0.08f, 0.0f, 0.4025f},
+struct ArmTarget {
+    TcpPose tcp_pose;
+    float local_wrist_pitch_rad;
+    float j4_rad;
+    GripperCommand gripper;
+};
+
+const ArmTarget START_TARGET = {
+    {{0.08f, 0.0f, 0.4425f}, 0.0f},
     0.0f,
+    1.57f,
+    GripperCommand::Open,
+};
+
+const ArmTarget END_TARGET = {
+    {{0.08f, 0.0f, 0.4025f}, 0.0f},
+    0.0f,
+    0.0f,
+    GripperCommand::Closed,
 };
 
 Pca9685ServoDriver servo_driver;
-TcpPose trajectory_poses[TRAJECTORY_WAYPOINT_COUNT];
+ArmTarget trajectory_targets[TRAJECTORY_WAYPOINT_COUNT];
 ArmJointAngles trajectory_angles[TRAJECTORY_WAYPOINT_COUNT];
 ArmJointPwmUs trajectory_pwm[TRAJECTORY_WAYPOINT_COUNT];
+uint16_t trajectory_gripper_pwm[TRAJECTORY_WAYPOINT_COUNT];
 uint8_t next_waypoint_index = 0;
 bool trajectory_ready = false;
 bool trajectory_finished = false;
 
-TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, float alpha);
+ArmTarget interpolateTarget(const ArmTarget &start_target, const ArmTarget &end_target, float alpha);
 bool computeTrajectory();
-bool computeWaypoint(uint8_t waypoint_index, const TcpPose &pose, ArmJointAngles &seed_angles);
+bool computeWaypoint(uint8_t waypoint_index, const ArmTarget &target, ArmJointAngles &seed_angles);
 void executeWaypoint(uint8_t waypoint_index);
-void setGripperZero();
+uint16_t gripperCommandToPwmUs(GripperCommand command);
 
 void setup() {
     Serial.begin(115200);
@@ -52,7 +68,6 @@ void setup() {
     }
 
     delay(100);
-    setGripperZero();
 
     trajectory_ready = computeTrajectory();
     if (!trajectory_ready) {
@@ -81,9 +96,12 @@ void loop() {
 }
 
 bool computeTrajectory() {
-    KinematicsResult<ArmJointAngles> start_ik = inverseKinematicsPositionYaw(START_POSE);
+    KinematicsResult<ArmJointAngles> start_ik =
+        inverseKinematicsPositionYawTcpOffsetPitch(
+            START_TARGET.tcp_pose,
+            START_TARGET.local_wrist_pitch_rad);
     if (start_ik.status != KinematicsStatus::Ok) {
-        Serial.print("Start pose IK failed status=");
+        Serial.print("Start target IK failed status=");
         Serial.println(static_cast<int>(start_ik.status));
         return false;
     }
@@ -94,9 +112,9 @@ bool computeTrajectory() {
     ArmJointAngles seed_angles = start_ik.value;
     for (uint8_t i = 0; i < TRAJECTORY_WAYPOINT_COUNT; ++i) {
         const float alpha = static_cast<float>(i) / static_cast<float>(TRAJECTORY_SEGMENT_COUNT);
-        const TcpPose pose = interpolatePose(START_POSE, END_POSE, alpha);
+        const ArmTarget target = interpolateTarget(START_TARGET, END_TARGET, alpha);
 
-        if (!computeWaypoint(i, pose, seed_angles)) {
+        if (!computeWaypoint(i, target, seed_angles)) {
             Serial.print("Waypoint computation failed index=");
             Serial.println(i);
             return false;
@@ -106,21 +124,29 @@ bool computeTrajectory() {
     return true;
 }
 
-bool computeWaypoint(uint8_t waypoint_index, const TcpPose &pose, ArmJointAngles &seed_angles) {
-    const KinematicsResult<ArmJointAngles> ik_result = inverseKinematicsPositionYawSeeded(pose, seed_angles);
+bool computeWaypoint(uint8_t waypoint_index, const ArmTarget &target, ArmJointAngles &seed_angles) {
+    const KinematicsResult<ArmJointAngles> ik_result =
+        inverseKinematicsPositionYawTcpOffsetPitchSeeded(
+            target.tcp_pose,
+            target.local_wrist_pitch_rad,
+            seed_angles);
     if (ik_result.status != KinematicsStatus::Ok) {
         return false;
     }
 
-    const KinematicsResult<ArmJointPwmUs> pwm_result = jointAnglesToPwmUs(ik_result.value, JOINT_CALIBRATIONS);
+    ArmJointAngles commanded_angles = ik_result.value;
+    commanded_angles.j4_rad = target.j4_rad;
+
+    const KinematicsResult<ArmJointPwmUs> pwm_result = jointAnglesToPwmUs(commanded_angles, JOINT_CALIBRATIONS);
     if (pwm_result.status != KinematicsStatus::Ok) {
         return false;
     }
 
-    trajectory_poses[waypoint_index] = pose;
-    trajectory_angles[waypoint_index] = ik_result.value;
+    trajectory_targets[waypoint_index] = target;
+    trajectory_angles[waypoint_index] = commanded_angles;
     trajectory_pwm[waypoint_index] = pwm_result.value;
-    seed_angles = ik_result.value;
+    trajectory_gripper_pwm[waypoint_index] = gripperCommandToPwmUs(target.gripper);
+    seed_angles = commanded_angles;
     return true;
 }
 
@@ -143,24 +169,33 @@ void executeWaypoint(uint8_t waypoint_index) {
             JOINT_CALIBRATIONS[i].channel,
             pwm_values[i]);
     }
+
+    const JointCalibration &gripper = JOINT_CALIBRATIONS[ROBOT_GRIPPER_JOINT_INDEX];
+    servo_driver.setServoUs(gripper.channel, trajectory_gripper_pwm[waypoint_index]);
 }
 
-TcpPose interpolatePose(const TcpPose &start_pose, const TcpPose &end_pose, float alpha) {
+ArmTarget interpolateTarget(const ArmTarget &start_target, const ArmTarget &end_target, float alpha) {
     const Vector3 position = {
-        start_pose.position.x_m + alpha * (end_pose.position.x_m - start_pose.position.x_m),
-        start_pose.position.y_m + alpha * (end_pose.position.y_m - start_pose.position.y_m),
-        start_pose.position.z_m + alpha * (end_pose.position.z_m - start_pose.position.z_m),
+        start_target.tcp_pose.position.x_m +
+            alpha * (end_target.tcp_pose.position.x_m - start_target.tcp_pose.position.x_m),
+        start_target.tcp_pose.position.y_m +
+            alpha * (end_target.tcp_pose.position.y_m - start_target.tcp_pose.position.y_m),
+        start_target.tcp_pose.position.z_m +
+            alpha * (end_target.tcp_pose.position.z_m - start_target.tcp_pose.position.z_m),
     };
 
     const float target_r_m = sqrt(position.x_m * position.x_m + position.y_m * position.y_m);
     const float target_yaw_rad = target_r_m <= 0.000001f ? 0.0f : atan2(position.y_m, position.x_m);
     return {
-        position,
-        target_yaw_rad,
+        {position, target_yaw_rad},
+        start_target.local_wrist_pitch_rad +
+            alpha * (end_target.local_wrist_pitch_rad - start_target.local_wrist_pitch_rad),
+        start_target.j4_rad + alpha * (end_target.j4_rad - start_target.j4_rad),
+        alpha < 1.0f ? start_target.gripper : end_target.gripper,
     };
 }
 
-void setGripperZero() {
+uint16_t gripperCommandToPwmUs(GripperCommand command) {
     const JointCalibration &gripper = JOINT_CALIBRATIONS[ROBOT_GRIPPER_JOINT_INDEX];
-    servo_driver.setServoUs(gripper.channel, gripper.pwm_zero_us);
+    return command == GripperCommand::Open ? gripper.pwm_max_us : gripper.pwm_min_us;
 }
