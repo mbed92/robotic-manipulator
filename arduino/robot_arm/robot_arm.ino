@@ -26,10 +26,10 @@ struct ArmTarget {
 };
 
 const ArmTarget TARGET = {
-    {0.2f, 0.4f, 0.0f},
+    {0.280f, 0.152f, 0.0f},
+    1.047f,
     0.0f,
-    0.0f,
-    GripperCommand::Closed,
+    GripperCommand::Open,
 };
 
 Pca9685ServoDriver servo_driver;
@@ -40,10 +40,9 @@ bool target_ready = false;
 bool target_sent = false;
 
 bool computeTargetCommand(const ArmTarget &target);
-void executeTargetCommand();
+void sendTargetCommand();
 void printTargetDiagnostics(const ArmTarget &target, const ArmJointAngles &angles, const ArmJointPwmUs &pwm);
 void printArmJointAngles(const ArmJointAngles &angles);
-void printJointPwmFailure(uint8_t joint_index, float angle_rad, KinematicsStatus status);
 uint16_t gripperCommandToPwmUs(GripperCommand command);
 
 void setup() {
@@ -70,9 +69,9 @@ void loop() {
         return;
     }
 
-    executeTargetCommand();
+    sendTargetCommand();
     target_sent = true;
-    Serial.println("Target command sent");
+    Serial.println("TARGET command sent");
 }
 
 bool computeTargetCommand(const ArmTarget &target) {
@@ -80,7 +79,7 @@ bool computeTargetCommand(const ArmTarget &target) {
     const KinematicsResult<ArmJointAngles> ik_result = inverseKinematicsPositionYawPitch(target.tcp_pose, target.j3_rad);
     if (ik_result.status != KinematicsStatus::Ok) {
         Serial.print("Target IK failed status=");
-        Serial.println(static_cast<int>(ik_result.status));
+        Serial.println(kinematicsStatusName(ik_result.status));
         return false;
     }
 
@@ -90,24 +89,10 @@ bool computeTargetCommand(const ArmTarget &target) {
     printArmJointAngles(commanded_angles);
 
     // Then convert the full joint angle command to PWM values for the servo driver.
-    const float angle_values[ROBOT_KINEMATIC_JOINT_COUNT] = {
-        commanded_angles.j0_rad,
-        commanded_angles.j1_rad,
-        commanded_angles.j2_rad,
-        commanded_angles.j3_rad,
-        commanded_angles.j4_rad,
-    };
-    for (uint8_t i = 0; i < ROBOT_KINEMATIC_JOINT_COUNT; ++i) {
-        const KinematicsResult<uint16_t> joint_pwm_result = jointAngleToPwmUs(i, angle_values[i], JOINT_CALIBRATIONS);
-        if (joint_pwm_result.status != KinematicsStatus::Ok) {
-            printJointPwmFailure(i, angle_values[i], joint_pwm_result.status);
-        }
-    }
-
     const KinematicsResult<ArmJointPwmUs> pwm_result = jointAnglesToPwmUs(commanded_angles, JOINT_CALIBRATIONS);
     if (pwm_result.status != KinematicsStatus::Ok) {
         Serial.print("Target PWM failed status=");
-        Serial.println(static_cast<int>(pwm_result.status));
+        Serial.println(kinematicsStatusName(pwm_result.status));
         return false;
     }
 
@@ -119,8 +104,8 @@ bool computeTargetCommand(const ArmTarget &target) {
     return true;
 }
 
-void executeTargetCommand() {
-    Serial.println("Executing target command");
+void sendTargetCommand() {
+    Serial.println("Sending TARGET command");
 
     const uint16_t pwm_values[ROBOT_KINEMATIC_JOINT_COUNT] = {
         target_pwm.j0_us,
@@ -164,7 +149,7 @@ void printTargetDiagnostics(const ArmTarget &target, const ArmJointAngles &angle
         Serial.println(fk_result.value.yaw_rad, 6);
     } else {
         Serial.print("Model FK failed status=");
-        Serial.println(static_cast<int>(fk_result.status));
+        Serial.println(kinematicsStatusName(fk_result.status));
     }
 
     Serial.print("Commanded PWM j0_us=");
@@ -190,15 +175,6 @@ void printArmJointAngles(const ArmJointAngles &angles) {
     Serial.print(angles.j3_rad, 6);
     Serial.print(" j4_rad=");
     Serial.println(angles.j4_rad, 6);
-}
-
-void printJointPwmFailure(uint8_t joint_index, float angle_rad, KinematicsStatus status) {
-    Serial.print("Joint PWM failed joint=");
-    Serial.print(joint_index);
-    Serial.print(" angle_rad=");
-    Serial.print(angle_rad, 6);
-    Serial.print(" status=");
-    Serial.println(static_cast<int>(status));
 }
 
 uint16_t gripperCommandToPwmUs(GripperCommand command) {

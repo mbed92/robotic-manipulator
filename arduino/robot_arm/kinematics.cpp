@@ -81,15 +81,15 @@ ArmJointAngles robotHomeJointAngles() {
 static float interpolatePwmUs(const JointCalibration &calibration, float angle_rad) {
     if (angle_rad >= calibration.angle_zero_rad) {
         const float angle_span = calibration.angle_max_rad - calibration.angle_zero_rad;
-        const float pwm_span = static_cast<float>(
-            calibration.pwm_max_us - calibration.pwm_zero_us);
+        const float pwm_span = static_cast<float>(calibration.pwm_max_us) -
+                               static_cast<float>(calibration.pwm_zero_us);
         return static_cast<float>(calibration.pwm_zero_us) +
                ((angle_rad - calibration.angle_zero_rad) * pwm_span) / angle_span;
     }
 
     const float angle_span = calibration.angle_zero_rad - calibration.angle_min_rad;
-    const float pwm_span = static_cast<float>(
-        calibration.pwm_zero_us - calibration.pwm_min_us);
+    const float pwm_span = static_cast<float>(calibration.pwm_zero_us) -
+                           static_cast<float>(calibration.pwm_min_us);
     return static_cast<float>(calibration.pwm_zero_us) -
            ((calibration.angle_zero_rad - angle_rad) * pwm_span) / angle_span;
 }
@@ -130,6 +130,23 @@ static ArmJointAngles emptyAngles() {
 
 static TcpPose emptyPose() {
     return {0.0f, 0.0f, 0.0f};
+}
+
+const char *kinematicsStatusName(KinematicsStatus status) {
+    switch (status) {
+        case KinematicsStatus::Ok:
+            return "Ok";
+        case KinematicsStatus::OutOfReach:
+            return "OutOfReach";
+        case KinematicsStatus::JointLimitViolation:
+            return "JointLimitViolation";
+        case KinematicsStatus::NotImplemented:
+            return "NotImplemented";
+        case KinematicsStatus::InvalidInput:
+            return "InvalidInput";
+    }
+
+    return "Unknown";
 }
 
 KinematicsResult<uint16_t> jointAngleToPwmUs(

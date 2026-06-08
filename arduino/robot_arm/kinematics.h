@@ -36,6 +36,8 @@ enum class KinematicsStatus {
     InvalidInput,
 };
 
+const char *kinematicsStatusName(KinematicsStatus status);
+
 template <typename T>
 struct KinematicsResult {
     KinematicsStatus status;
