@@ -1,9 +1,10 @@
 /**
- * Simple single Cartesian target command.
+ * Simple fixed Cartesian target sequence.
  *
- * setup() computes one IK solution for TARGET. loop() sends the resulting
- * servo commands once and then stays idle. IK solves J0-J3 from the target
- * TCP position, yaw, and explicit J3 pitch. J4 and J5 are explicit user commands.
+ * setup() moves the robot to ZERO, waits, moves to TARGET1, waits, moves to
+ * TARGET2, waits, then returns to ZERO. loop() stays idle. IK solves J0-J3
+ * from the target TCP position, yaw, and explicit J3 pitch. J4 and J5 are
+ * explicit user commands.
  */
 
 #include <Wire.h>
@@ -25,21 +26,30 @@ struct ArmTarget {
     GripperCommand gripper;
 };
 
-const ArmTarget TARGET = {
-    {0.280f, 0.152f, 0.0f},
+const ArmTarget TARGET1 = {
+    {0.280f, 0.152f, 0.5f},
     1.047f,
-    0.0f,
-    GripperCommand::Open,
+    1.0f,
+    GripperCommand::Closed,
 };
+
+const ArmTarget TARGET2 = {
+    {0.2f, 0.35f, -0.5f},
+    1.047f,
+    -1.0f,
+    GripperCommand::Closed,
+};
+
+constexpr unsigned long STEP_DELAY_MS = 2000;
 
 Pca9685ServoDriver servo_driver;
 ArmJointAngles target_angles;
 ArmJointPwmUs target_pwm;
 uint16_t target_gripper_pwm;
-bool target_ready = false;
-bool target_sent = false;
 
 bool computeTargetCommand(const ArmTarget &target);
+bool computeAndSendTargetCommand(const char *name, const ArmTarget &target);
+void sendZeroCommand();
 void sendTargetCommand();
 void printTargetDiagnostics(const ArmTarget &target, const ArmJointAngles &angles, const ArmJointPwmUs &pwm);
 void printArmJointAngles(const ArmJointAngles &angles);
@@ -55,23 +65,28 @@ void setup() {
 
     delay(100);
 
-    target_ready = computeTargetCommand(TARGET);
-    if (!target_ready) {
-        Serial.println("Target command computation failed");
+    sendZeroCommand();
+    Serial.println("ZERO command sent");
+    delay(STEP_DELAY_MS);
+
+    if (!computeAndSendTargetCommand("TARGET1", TARGET1)) {
+        Serial.println("TARGET1 command failed; sequence stopped");
         return;
     }
+    delay(STEP_DELAY_MS);
 
-    Serial.println("Target command computation OK");
+    if (!computeAndSendTargetCommand("TARGET2", TARGET2)) {
+        Serial.println("TARGET2 command failed; sequence stopped");
+        return;
+    }
+    delay(STEP_DELAY_MS);
+
+    sendZeroCommand();
+    Serial.println("ZERO command sent");
+    Serial.println("Target sequence complete");
 }
 
 void loop() {
-    if (!target_ready || target_sent) {
-        return;
-    }
-
-    sendTargetCommand();
-    target_sent = true;
-    Serial.println("TARGET command sent");
 }
 
 bool computeTargetCommand(const ArmTarget &target) {
@@ -102,6 +117,29 @@ bool computeTargetCommand(const ArmTarget &target) {
     target_gripper_pwm = gripperCommandToPwmUs(target.gripper);
     printTargetDiagnostics(target, target_angles, target_pwm);
     return true;
+}
+
+bool computeAndSendTargetCommand(const char *name, const ArmTarget &target) {
+    Serial.print("Computing ");
+    Serial.println(name);
+
+    if (!computeTargetCommand(target)) {
+        return false;
+    }
+
+    sendTargetCommand();
+    Serial.print(name);
+    Serial.println(" command sent");
+    return true;
+}
+
+void sendZeroCommand() {
+    Serial.println("Sending ZERO command");
+
+    for (uint8_t i = 0; i < ROBOT_TOTAL_JOINT_COUNT; ++i) {
+        const JointCalibration &joint = JOINT_CALIBRATIONS[i];
+        servo_driver.setServoUs(joint.channel, joint.pwm_zero_us);
+    }
 }
 
 void sendTargetCommand() {
