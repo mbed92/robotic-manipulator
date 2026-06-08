@@ -13,7 +13,9 @@ and I had a lot of fun working on it.
 - `arduino/robot_arm/kinematics.*` - forward kinematics, inverse kinematics, and angle-to-PWM conversion.
 - `arduino/robot_arm/robot_calibration.h` - servo channels, joint limits, HOME pose, and arm dimensions.
 - `arduino/robot_arm/pca9685_servo_driver.*` - PCA9685 driver wrapper.
-- `docs/lessons-learned.md` - practical notes from calibration, IK debugging, and wiring.
+- [`docs/bom.md`](docs/bom.md) - V1 prototype bill of materials.
+- [`docs/lessons-learned.md`](docs/lessons-learned.md) - practical notes from calibration, IK debugging, and wiring.
+- [`docs/TODO.md`](docs/TODO.md) - project task notes and planned improvements.
 - `pcb/` - KiCad PCB project.
 
 ## Hardware
