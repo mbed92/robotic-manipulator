@@ -13,6 +13,7 @@ and I had a lot of fun working on it.
 - `arduino/robot_arm/kinematics.*` - forward kinematics, inverse kinematics, and angle-to-PWM conversion.
 - `arduino/robot_arm/robot_calibration.h` - servo channels, joint limits, HOME pose, and arm dimensions.
 - `arduino/robot_arm/pca9685_servo_driver.*` - PCA9685 driver wrapper.
+- `docs/lessons-learned.md` - practical notes from calibration, IK debugging, and wiring.
 - `pcb/` - KiCad PCB project.
 
 ## Hardware
@@ -138,34 +139,17 @@ The `J5` gripper is controlled separately:
 
 ## Lessons Learned
 
-Mechanical zero must be established physically, not only in software. Mount
-each servo horn so the joint is at its real zero position when the servo is
-commanded to `pwm_zero_us`. If the horn is installed one spline off, later
-calibration can hide the symptom, but the usable range becomes asymmetric and
-the joint can hit a mechanical stop before the software limit is reached.
+The main practical lessons are:
 
-Angle-to-PWM mapping should be calibrated per joint and checked against both
-software and mechanical limits. For each joint, confirm:
+- mechanical zero is set by servo horn mounting first, then refined with
+  `pwm_zero_us`,
+- each joint needs its own zero, min, max, sign direction, and mechanical-stop
+  check,
+- IK commands should be sanity-checked by running FK on the resulting joint
+  angles,
+- Arduino logic power and servo power should be separated, with a common ground.
 
-- the PWM value for physical zero,
-- the PWM values for the minimum and maximum safe angles,
-- whether the servo direction is normal or reversed,
-- that the configured angle limits reject commands before the mechanism reaches
-  a hard stop.
-
-Joint sign conventions must be verified on the real manipulator. Move one joint
-at a time by a small positive command and record whether the physical motion
-matches the kinematic model. Do the same for a small negative command. This is
-especially important before trusting FK/IK results, because a single inverted
-joint sign can make a mathematically valid command move the arm in the wrong
-direction.
-
-The kinematic model should match the actual mechanism instead of solving a more
-general problem than the robot needs. In this project the IK can be kept simple:
-`J0` provides independent yaw, `J1-J3` form a planar `Reacher2D` chain, and `J4`
-is a user-defined local wrist/TCP rotation rather than a variable inferred from
-TCP position. This keeps the firmware easier to debug and reduces the number of
-ambiguous IK solutions.
+See [`docs/lessons-learned.md`](docs/lessons-learned.md) for the detailed notes.
 
 ## Startup Safety
 
