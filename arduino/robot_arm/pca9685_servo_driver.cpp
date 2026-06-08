@@ -25,14 +25,6 @@ void Pca9685ServoDriver::setServoUs(uint8_t channel, uint16_t target_us) {
     writeServoUs(channel, target_us);
 }
 
-void Pca9685ServoDriver::setServoUsImmediate(uint8_t channel, uint16_t target_us) {
-    if (channel >= CHANNEL_COUNT) {
-        return;
-    }
-
-    writeServoUs(channel, target_us);
-}
-
 bool Pca9685ServoDriver::currentServoUs(uint8_t channel, uint16_t &pwm_us) const {
     if (channel >= CHANNEL_COUNT || !current_pwm_known_[channel]) {
         return false;

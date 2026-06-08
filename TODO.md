@@ -41,7 +41,7 @@ Recommended first implementation:
 - Read or track the current PWM for each joint.
 - Compute the maximum required delta across all joints.
 - Step from current values to target values proportionally so all joints finish together.
-- Use `setServoUsImmediate()` for each channel inside each ramp sample.
+- Use `setServoUs()` for each channel inside each ramp sample.
 
 Main trade-off:
 - A blocking `moveAllJointsRamp()` is acceptable as a simple first step and fixes sequential joint motion.

@@ -19,7 +19,6 @@ class Pca9685ServoDriver {
 
     bool begin();
     void setServoUs(uint8_t channel, uint16_t target_us);
-    void setServoUsImmediate(uint8_t channel, uint16_t target_us);
     bool currentServoUs(uint8_t channel, uint16_t &pwm_us) const;
 
   private:
