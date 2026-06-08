@@ -27,6 +27,9 @@ The firmware assumes:
 - six logical joints `J0-J5`, where `J0-J4` are part of the kinematic model
   and `J5` is the gripper.
 
+The mechanical design and servo selection are based on material from
+[Elektroweb](https://elektroweb.pl).
+
 Joint indices map to PCA9685 channels defined in
 `arduino/robot_arm/robot_calibration.h`.
 
