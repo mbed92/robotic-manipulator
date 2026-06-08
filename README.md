@@ -99,18 +99,20 @@ Possible error statuses include:
 
 ## Control Rules
 
-The current firmware executes one requested Cartesian command:
+The current firmware executes a fixed Cartesian target sequence during startup:
 
-1. `TARGET` in `robot_arm.ino` defines the target `TcpPose`, explicit `J3`,
-   explicit `J4`, and gripper state.
-2. `setup()` initializes the PCA9685 and computes the command for the target.
-3. If IK and PWM conversion succeed, `loop()` sends the command to the servos
-   exactly once.
-4. After sending the command, the program stays idle.
+1. `TARGET1` and `TARGET2` in `robot_arm.ino` define target `TcpPose` values,
+   explicit `J3`, explicit `J4`, and gripper state.
+2. `setup()` initializes the PCA9685 and first sends all joints to `ZERO`.
+3. After `STEP_DELAY_MS`, the firmware computes and sends `TARGET1`.
+4. After another delay, the firmware computes and sends `TARGET2`.
+5. After another delay, the firmware sends all joints back to `ZERO`.
+6. Once the sequence is complete, `loop()` stays idle.
 
 There is currently no trajectory planning, velocity ramping, motion
-interpolation, or feedback control loop. Servos receive the target PWM pulse
-width directly, so every new target should be tested carefully.
+interpolation, or feedback control loop. Servos receive each target PWM pulse
+width directly, so every new target and every transition in the sequence should
+be tested carefully.
 
 ## Angle-To-PWM Mapping
 
