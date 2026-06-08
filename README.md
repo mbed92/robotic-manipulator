@@ -13,6 +13,9 @@ and I had a lot of fun working on it.
 - `arduino/robot_arm/kinematics.*` - forward kinematics, inverse kinematics, and angle-to-PWM conversion.
 - `arduino/robot_arm/robot_calibration.h` - servo channels, joint limits, HOME pose, and arm dimensions.
 - `arduino/robot_arm/pca9685_servo_driver.*` - PCA9685 driver wrapper.
+- [`docs/bom.md`](docs/bom.md) - V1 prototype bill of materials.
+- [`docs/lessons-learned.md`](docs/lessons-learned.md) - practical notes from calibration, IK debugging, and wiring.
+- [`docs/TODO.md`](docs/TODO.md) - project task notes and planned improvements.
 - `pcb/` - KiCad PCB project.
 
 ## Hardware
@@ -23,6 +26,9 @@ The firmware assumes:
 - a PCA9685 PWM driver on the I2C bus,
 - six logical joints `J0-J5`, where `J0-J4` are part of the kinematic model
   and `J5` is the gripper.
+
+The mechanical design and servo selection are based on material from
+[Elektroweb](https://elektroweb.pl).
 
 Joint indices map to PCA9685 channels defined in
 `arduino/robot_arm/robot_calibration.h`.
@@ -99,18 +105,30 @@ Possible error statuses include:
 
 ## Control Rules
 
-The current firmware executes one requested Cartesian command:
+The current firmware executes a fixed Cartesian target sequence during startup:
 
-1. `TARGET` in `robot_arm.ino` defines the target `TcpPose`, explicit `J3`,
-   explicit `J4`, and gripper state.
-2. `setup()` initializes the PCA9685 and computes the command for the target.
-3. If IK and PWM conversion succeed, `loop()` sends the command to the servos
-   exactly once.
-4. After sending the command, the program stays idle.
+1. `TARGET1` and `TARGET2` in `robot_arm.ino` define target `TcpPose` values,
+   explicit `J3`, explicit `J4`, and gripper state.
+2. `setup()` initializes the PCA9685 and first sends all joints to `ZERO`.
+3. After `STEP_DELAY_MS`, the firmware computes and sends `TARGET1`.
+4. After another delay, the firmware computes and sends `TARGET2`.
+5. After another delay, the firmware sends all joints back to `ZERO`.
+6. Once the sequence is complete, `loop()` stays idle.
 
 There is currently no trajectory planning, velocity ramping, motion
-interpolation, or feedback control loop. Servos receive the target PWM pulse
-width directly, so every new target should be tested carefully.
+interpolation, or feedback control loop. Servos receive each target PWM pulse
+width directly, so every new target and every transition in the sequence should
+be tested carefully.
+
+## V1 Limitations
+
+- No closed-loop feedback from joints.
+- No trajectory planner; movement is currently PWM target based.
+- IK solves TCP position and base yaw, not full 6D pose.
+- `J3` is an explicit input; `J4` is treated as local wrist rotation.
+- Calibration is specific to this physical build and should not be copied
+  blindly.
+- Servo limits are conservative to avoid mechanical stops.
 
 ## Angle-To-PWM Mapping
 
@@ -136,34 +154,17 @@ The `J5` gripper is controlled separately:
 
 ## Lessons Learned
 
-Mechanical zero must be established physically, not only in software. Mount
-each servo horn so the joint is at its real zero position when the servo is
-commanded to `pwm_zero_us`. If the horn is installed one spline off, later
-calibration can hide the symptom, but the usable range becomes asymmetric and
-the joint can hit a mechanical stop before the software limit is reached.
+The main practical lessons are:
 
-Angle-to-PWM mapping should be calibrated per joint and checked against both
-software and mechanical limits. For each joint, confirm:
+- mechanical zero is set by servo horn mounting first, then refined with
+  `pwm_zero_us`,
+- each joint needs its own zero, min, max, sign direction, and mechanical-stop
+  check,
+- IK commands should be sanity-checked by running FK on the resulting joint
+  angles,
+- Arduino logic power and servo power should be separated, with a common ground.
 
-- the PWM value for physical zero,
-- the PWM values for the minimum and maximum safe angles,
-- whether the servo direction is normal or reversed,
-- that the configured angle limits reject commands before the mechanism reaches
-  a hard stop.
-
-Joint sign conventions must be verified on the real manipulator. Move one joint
-at a time by a small positive command and record whether the physical motion
-matches the kinematic model. Do the same for a small negative command. This is
-especially important before trusting FK/IK results, because a single inverted
-joint sign can make a mathematically valid command move the arm in the wrong
-direction.
-
-The kinematic model should match the actual mechanism instead of solving a more
-general problem than the robot needs. In this project the IK can be kept simple:
-`J0` provides independent yaw, `J1-J3` form a planar `Reacher2D` chain, and `J4`
-is a user-defined local wrist/TCP rotation rather than a variable inferred from
-TCP position. This keeps the firmware easier to debug and reduces the number of
-ambiguous IK solutions.
+See [`docs/lessons-learned.md`](docs/lessons-learned.md) for the detailed notes.
 
 ## Startup Safety
 
