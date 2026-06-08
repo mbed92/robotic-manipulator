@@ -1,0 +1,462 @@
+#include "kinematics.h"
+
+#include <math.h>
+
+constexpr float FULL_TURN_RAD = 6.28318530718f;
+constexpr float IK_EPSILON_M = 0.000001f;
+
+static bool isFiniteFloat(float value) {
+    return !isnan(value) && !isinf(value);
+}
+
+static bool isValidOffsets(const JointOffsets &offsets) {
+    return isFiniteFloat(offsets.l1_m) && offsets.l1_m >= 0.0f &&
+           isFiniteFloat(offsets.l2_m) && offsets.l2_m >= 0.0f &&
+           isFiniteFloat(offsets.l3_m) && offsets.l3_m >= 0.0f &&
+           isFiniteFloat(offsets.l4_m) && offsets.l4_m >= 0.0f &&
+           isFiniteFloat(offsets.l5_m) && offsets.l5_m >= 0.0f;
+}
+
+static bool isValidAngles(const ArmJointAngles &angles) {
+    return isFiniteFloat(angles.j0_rad) &&
+           isFiniteFloat(angles.j1_rad) &&
+           isFiniteFloat(angles.j2_rad) &&
+           isFiniteFloat(angles.j3_rad) &&
+           isFiniteFloat(angles.j4_rad);
+}
+
+static bool isValidPose(const TcpPose &pose) {
+    return isFiniteFloat(pose.reach_x_m) &&
+           isFiniteFloat(pose.reach_z_m) &&
+           isFiniteFloat(pose.yaw_rad);
+}
+
+static float normalizeAngleRad(float angle_rad) {
+    while (angle_rad > PI) {
+        angle_rad -= FULL_TURN_RAD;
+    }
+    while (angle_rad < -PI) {
+        angle_rad += FULL_TURN_RAD;
+    }
+    return angle_rad;
+}
+
+static float angleDistanceRad(float a_rad, float b_rad) {
+    return normalizeAngleRad(a_rad - b_rad);
+}
+
+static bool isWithinJointLimit(uint8_t joint_index, float angle_rad) {
+    const JointCalibration &calibration = JOINT_CALIBRATIONS[joint_index];
+    return angle_rad >= calibration.angle_min_rad &&
+           angle_rad <= calibration.angle_max_rad;
+}
+
+static bool areWithinJointLimits(const ArmJointAngles &angles) {
+    return isWithinJointLimit(0, angles.j0_rad) &&
+           isWithinJointLimit(1, angles.j1_rad) &&
+           isWithinJointLimit(2, angles.j2_rad) &&
+           isWithinJointLimit(3, angles.j3_rad) &&
+           isWithinJointLimit(4, angles.j4_rad);
+}
+
+static float jointDistanceSquared(const ArmJointAngles &a, const ArmJointAngles &b) {
+    const float d0 = angleDistanceRad(a.j0_rad, b.j0_rad);
+    const float d1 = angleDistanceRad(a.j1_rad, b.j1_rad);
+    const float d2 = angleDistanceRad(a.j2_rad, b.j2_rad);
+    const float d3 = angleDistanceRad(a.j3_rad, b.j3_rad);
+    const float d4 = angleDistanceRad(a.j4_rad, b.j4_rad);
+    return d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3 + d4 * d4;
+}
+
+ArmJointAngles robotHomeJointAngles() {
+    return {
+        ROBOT_HOME_J0_RAD,
+        ROBOT_HOME_J1_RAD,
+        ROBOT_HOME_J2_RAD,
+        ROBOT_HOME_J3_RAD,
+        ROBOT_HOME_J4_RAD,
+    };
+}
+
+static float interpolatePwmUs(const JointCalibration &calibration, float angle_rad) {
+    if (angle_rad >= calibration.angle_zero_rad) {
+        const float angle_span = calibration.angle_max_rad - calibration.angle_zero_rad;
+        const float pwm_span = static_cast<float>(calibration.pwm_max_us) -
+                               static_cast<float>(calibration.pwm_zero_us);
+        return static_cast<float>(calibration.pwm_zero_us) +
+               ((angle_rad - calibration.angle_zero_rad) * pwm_span) / angle_span;
+    }
+
+    const float angle_span = calibration.angle_zero_rad - calibration.angle_min_rad;
+    const float pwm_span = static_cast<float>(calibration.pwm_zero_us) -
+                           static_cast<float>(calibration.pwm_min_us);
+    return static_cast<float>(calibration.pwm_zero_us) -
+           ((calibration.angle_zero_rad - angle_rad) * pwm_span) / angle_span;
+}
+
+static uint16_t lowerPwmBoundUs(const JointCalibration &calibration) {
+    uint16_t lower_us = calibration.pwm_min_us;
+    if (calibration.pwm_zero_us < lower_us) {
+        lower_us = calibration.pwm_zero_us;
+    }
+    if (calibration.pwm_max_us < lower_us) {
+        lower_us = calibration.pwm_max_us;
+    }
+    return lower_us;
+}
+
+static uint16_t upperPwmBoundUs(const JointCalibration &calibration) {
+    uint16_t upper_us = calibration.pwm_min_us;
+    if (calibration.pwm_zero_us > upper_us) {
+        upper_us = calibration.pwm_zero_us;
+    }
+    if (calibration.pwm_max_us > upper_us) {
+        upper_us = calibration.pwm_max_us;
+    }
+    return upper_us;
+}
+
+static uint16_t roundToUint16(float value) {
+    return static_cast<uint16_t>(value + 0.5f);
+}
+
+static ArmJointPwmUs emptyPwm() {
+    return {0, 0, 0, 0, 0};
+}
+
+static ArmJointAngles emptyAngles() {
+    return {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+}
+
+static TcpPose emptyPose() {
+    return {0.0f, 0.0f, 0.0f};
+}
+
+const char *kinematicsStatusName(KinematicsStatus status) {
+    switch (status) {
+        case KinematicsStatus::Ok:
+            return "Ok";
+        case KinematicsStatus::OutOfReach:
+            return "OutOfReach";
+        case KinematicsStatus::JointLimitViolation:
+            return "JointLimitViolation";
+        case KinematicsStatus::NotImplemented:
+            return "NotImplemented";
+        case KinematicsStatus::InvalidInput:
+            return "InvalidInput";
+    }
+
+    return "Unknown";
+}
+
+KinematicsResult<uint16_t> jointAngleToPwmUs(
+    uint8_t joint_index,
+    float angle_rad,
+    const JointCalibration calibrations[ROBOT_TOTAL_JOINT_COUNT]) {
+    if (joint_index >= ROBOT_TOTAL_JOINT_COUNT || !isFiniteFloat(angle_rad)) {
+        return {KinematicsStatus::InvalidInput, 0};
+    }
+
+    const JointCalibration &calibration = calibrations[joint_index];
+    if (angle_rad < calibration.angle_min_rad || angle_rad > calibration.angle_max_rad) {
+        return {KinematicsStatus::JointLimitViolation, 0};
+    }
+
+    const float pwm_us = interpolatePwmUs(calibration, angle_rad);
+    if (!isFiniteFloat(pwm_us) ||
+        pwm_us < static_cast<float>(lowerPwmBoundUs(calibration)) ||
+        pwm_us > static_cast<float>(upperPwmBoundUs(calibration))) {
+        return {KinematicsStatus::JointLimitViolation, 0};
+    }
+
+    return {KinematicsStatus::Ok, roundToUint16(pwm_us)};
+}
+
+KinematicsResult<ArmJointPwmUs> jointAnglesToPwmUs(
+    const ArmJointAngles &angles,
+    const JointCalibration calibrations[ROBOT_TOTAL_JOINT_COUNT]) {
+    if (!isValidAngles(angles)) {
+        return {KinematicsStatus::InvalidInput, emptyPwm()};
+    }
+
+    const float angle_values[] = {
+        angles.j0_rad,
+        angles.j1_rad,
+        angles.j2_rad,
+        angles.j3_rad,
+        angles.j4_rad,
+    };
+
+    uint16_t pwm_values[] = {0, 0, 0, 0, 0};
+    for (uint8_t i = 0; i < ROBOT_KINEMATIC_JOINT_COUNT; ++i) {
+        const KinematicsResult<uint16_t> result = jointAngleToPwmUs(i, angle_values[i], calibrations);
+        if (result.status != KinematicsStatus::Ok) {
+            return {result.status, emptyPwm()};
+        }
+        pwm_values[i] = result.value;
+    }
+
+    return {
+        KinematicsStatus::Ok,
+        {
+            pwm_values[0],
+            pwm_values[1],
+            pwm_values[2],
+            pwm_values[3],
+            pwm_values[4],
+        },
+    };
+}
+
+/*
+ * Forward kinematics implementation.
+ *
+ * J0 is the base rotation,
+ * J1-J3 are the arm pitch joints,
+ * J4 is independent local wrist rotation.
+ *
+ * The FK convention is that all joints at 0 radians point straight up, so the arm
+ * extends in the positive Z direction when all angles are zero. J0 rotates the arm
+ * around the vertical axis, and J4 rotates the wrist around the local vertical axis at
+ * the end of the arm.
+ *
+ * The reported TCP pose is represented as planar reach, height, and yaw
+ * resulting from J0. J4 is independent local wrist rotation and does not
+ * change the reported TCP pose.
+ */
+KinematicsResult<TcpPose> forwardKinematics(
+    const ArmJointAngles &angles,
+    const JointOffsets &offsets) {
+    if (!isValidAngles(angles) || !isValidOffsets(offsets)) {
+        return {KinematicsStatus::InvalidInput, emptyPose()};
+    }
+
+    // J1-J3 are planar pitch joints measured from vertical: 0 rad points up,
+    // so horizontal reach uses sin() and vertical height uses cos().
+    const float pitch_1 = angles.j1_rad;
+    const float pitch_2 = pitch_1 + angles.j2_rad;
+    const float pitch_3 = pitch_2 + angles.j3_rad;
+
+    const float reach_m =
+        offsets.l2_m * sin(pitch_1) +
+        offsets.l3_m * sin(pitch_2) +
+        offsets.l4_m * sin(pitch_3) +
+        offsets.l5_m * sin(pitch_3);
+
+    const float z_m =
+        offsets.l1_m +
+        offsets.l2_m * cos(pitch_1) +
+        offsets.l3_m * cos(pitch_2) +
+        offsets.l4_m * cos(pitch_3) +
+        offsets.l5_m * cos(pitch_3);
+
+    TcpPose pose = {reach_m, z_m, normalizeAngleRad(angles.j0_rad)};
+
+    return {KinematicsStatus::Ok, pose};
+}
+
+/*
+ * Inverse kinematics implementation.
+ *
+ * The IK solution is computed using a geometric approach. The TCP position is
+ * solved as a planar 2-link arm: l2 is the proximal link and the fixed J3 pitch
+ * determines the effective distal link from J2 to the TCP.
+ * Finally, the base angle follows the target TCP yaw and the J4 angle is kept
+ * at HOME because it is independent of the TCP pose.
+ *
+ * Both elbow configurations are computed when valid, and the one closest to the
+ * HOME configuration is selected. Joint limits are checked for both
+ * configurations, and if both are valid, the nearest one to HOME is returned. If
+ * only one is valid, it is returned. If neither is valid, an error status is
+ * returned indicating whether the target was out of reach or if there was a joint
+ * limit violation.
+ *
+ * The IK convention is that all joints at 0 radians point straight up, so the arm
+ * extends in the positive Z direction when all angles are zero. J0 rotates the arm
+ * around the vertical axis, and J4 rotates the wrist around the local vertical axis at
+ * the end of the arm. The TCP pose convention is planar reach, height, and yaw.
+ *
+ * The IK solution does not infer J3 or J4 from the TCP pose. J3 is an explicit
+ * user command that changes the solved geometry, and J4 follows the HOME value
+ * while respecting joint limits.
+ */
+
+static bool solvePlanarTwoLink(
+    float wrist_r_m,
+    float wrist_z_m,
+    float l2_m,
+    float l3_m,
+    bool elbow_positive,
+    float &j1_rad,
+    float &j2_rad) {
+
+    // Check reachability before computing IK to avoid unnecessary calculations and potential numerical issues.
+    const float distance_sq_m = wrist_r_m * wrist_r_m + wrist_z_m * wrist_z_m;
+    const float distance_m = sqrt(distance_sq_m);
+    if (distance_m < IK_EPSILON_M) {
+        return false;
+    }
+
+    // The wrist position must be reachable by the planar 2-link arm formed by l2 and l3.
+    // The reachable workspace is an annular region with inner radius |l2 - l3| and outer radius l2 + l3.
+    const float max_reach_m = l2_m + l3_m;
+    const float min_reach_m = fabs(l2_m - l3_m);
+    if (distance_m > max_reach_m + IK_EPSILON_M ||
+        distance_m < min_reach_m - IK_EPSILON_M) {
+        return false;
+    }
+
+    // Compute the shoulder and elbow angles using the law of cosines and trigonometry.
+    // The shoulder angle is computed from the target wrist position and the elbow angle,
+    // which is computed from the triangle formed by the shoulder, elbow, and wrist.
+    float cos_beta = (l2_m * l2_m + distance_sq_m - l3_m * l3_m) / (2.0f * l2_m * distance_m);
+    if (cos_beta > 1.0f) {
+        cos_beta = 1.0f;
+    } else if (cos_beta < -1.0f) {
+        cos_beta = -1.0f;
+    }
+
+    // The target pitch is the angle from vertical to the line connecting the shoulder to the wrist.
+    const float target_pitch_rad = atan2(wrist_r_m, wrist_z_m);
+    const float beta_rad = acos(cos_beta);
+    const float link2_pitch_rad = elbow_positive ? target_pitch_rad + beta_rad : target_pitch_rad - beta_rad;
+    const float link3_r_m = wrist_r_m - l2_m * sin(link2_pitch_rad);
+    const float link3_z_m = wrist_z_m - l2_m * cos(link2_pitch_rad);
+    const float link3_pitch_rad = atan2(link3_r_m, link3_z_m);
+
+    j1_rad = normalizeAngleRad(link2_pitch_rad);
+    j2_rad = normalizeAngleRad(link3_pitch_rad - link2_pitch_rad);
+    return true;
+}
+
+static bool buildIkCandidate(
+    const TcpPose &target_pose,
+    const JointOffsets &offsets,
+    float fixed_j3_rad,
+    float j4_rad_from_home,
+    bool elbow_positive,
+    ArmJointAngles &candidate) {
+
+    const float target_r_m = target_pose.reach_x_m;
+    const float target_z_m = target_pose.reach_z_m - offsets.l1_m;
+    const float tcp_offset_m = offsets.l4_m + offsets.l5_m;
+    const float distal_r_at_zero_m = offsets.l3_m + tcp_offset_m * cos(fixed_j3_rad);
+    const float distal_z_at_zero_m = tcp_offset_m * sin(fixed_j3_rad);
+    const float distal_link_m = sqrt(
+        distal_r_at_zero_m * distal_r_at_zero_m +
+        distal_z_at_zero_m * distal_z_at_zero_m);
+    if (distal_link_m < IK_EPSILON_M) {
+        return false;
+    }
+
+    const float distal_pitch_offset_rad = atan2(distal_z_at_zero_m, distal_r_at_zero_m);
+
+    // Compute the shoulder and elbow angles using the planar 2-link IK solution
+    // for l2 and the effective distal link. The fixed J3 pitch changes the
+    // effective distal link length and angular offset, so convert the solved
+    // effective-link joint angle back to the real J2 angle.
+    float j1_rad = 0.0f;
+    float effective_j2_rad = 0.0f;
+    if (!solvePlanarTwoLink(
+            target_r_m,
+            target_z_m,
+            offsets.l2_m,
+            distal_link_m,
+            elbow_positive,
+            j1_rad,
+            effective_j2_rad)) {
+        return false;
+    }
+
+    const float j0_rad = normalizeAngleRad(target_pose.yaw_rad);
+    const float j2_rad = normalizeAngleRad(effective_j2_rad - distal_pitch_offset_rad);
+    const float j3_rad = normalizeAngleRad(fixed_j3_rad);
+    const float j4_rad = normalizeAngleRad(j4_rad_from_home);
+
+    candidate = {j0_rad, j1_rad, j2_rad, j3_rad, j4_rad};
+    return isValidAngles(candidate);
+}
+
+static KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawInternal(
+    const TcpPose &target_pose,
+    float fixed_j3_rad,
+    const JointOffsets &offsets) {
+    const ArmJointAngles home_angles = robotHomeJointAngles();
+    if (!isValidPose(target_pose) ||
+        !isValidOffsets(offsets) ||
+        !isValidAngles(home_angles) ||
+        !isFiniteFloat(fixed_j3_rad)) {
+        return {KinematicsStatus::InvalidInput, emptyAngles()};
+    }
+
+    // Check reachability before computing IK candidates to avoid unnecessary calculations.
+    const float target_r_m = target_pose.reach_x_m;
+    const float target_z_m = target_pose.reach_z_m - offsets.l1_m;
+    const float max_reach_m = offsets.l2_m + offsets.l3_m + offsets.l4_m + offsets.l5_m;
+    if (sqrt(target_r_m * target_r_m + target_z_m * target_z_m) > max_reach_m + IK_EPSILON_M) {
+        return {KinematicsStatus::OutOfReach, emptyAngles()};
+    }
+
+    // Compute both elbow configurations and select the nearest valid candidate
+    // to the configured HOME pose.
+    ArmJointAngles best_angles = emptyAngles();
+    float best_distance = 3.402823466e+38f;
+    bool has_candidate = false;
+    bool has_geometric_candidate = false;
+    for (uint8_t elbow = 0; elbow < 2; ++elbow) {
+        ArmJointAngles candidate = emptyAngles();
+        if (!buildIkCandidate(
+                target_pose,
+                offsets,
+                fixed_j3_rad,
+                home_angles.j4_rad,
+                elbow == 1,
+                candidate)) {
+            continue;
+        }
+
+        // A geometric IK solution was found for this elbow configuration, even if it may violate joint limits.
+        has_geometric_candidate = true;
+        if (!areWithinJointLimits(candidate)) {
+            continue;
+        }
+
+        // This candidate is valid, check if it's the best one we've found so far.
+        const float distance = jointDistanceSquared(candidate, home_angles);
+        if (!has_candidate || distance < best_distance) {
+            best_angles = candidate;
+            best_distance = distance;
+            has_candidate = true;
+        }
+    }
+
+    // If neither elbow configuration yields a valid solution,
+    // return an error status indicating whether the target was out of reach or if there was a joint limit violation.
+    if (!has_candidate) {
+        return {
+            has_geometric_candidate ? KinematicsStatus::JointLimitViolation : KinematicsStatus::OutOfReach,
+            emptyAngles(),
+        };
+    }
+
+    return {KinematicsStatus::Ok, best_angles};
+}
+
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionYaw(
+    const TcpPose &target_pose,
+    const JointOffsets &offsets) {
+    return inverseKinematicsPositionYawInternal(
+        target_pose,
+        ROBOT_HOME_J3_RAD,
+        offsets);
+}
+
+KinematicsResult<ArmJointAngles> inverseKinematicsPositionYawPitch(
+    const TcpPose &target_pose,
+    float j3_rad,
+    const JointOffsets &offsets) {
+    return inverseKinematicsPositionYawInternal(
+        target_pose,
+        j3_rad,
+        offsets);
+}
