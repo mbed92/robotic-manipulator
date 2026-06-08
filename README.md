@@ -115,6 +115,16 @@ interpolation, or feedback control loop. Servos receive each target PWM pulse
 width directly, so every new target and every transition in the sequence should
 be tested carefully.
 
+## V1 Limitations
+
+- No closed-loop feedback from joints.
+- No trajectory planner; movement is currently PWM target based.
+- IK solves TCP position and base yaw, not full 6D pose.
+- `J3` is an explicit input; `J4` is treated as local wrist rotation.
+- Calibration is specific to this physical build and should not be copied
+  blindly.
+- Servo limits are conservative to avoid mechanical stops.
+
 ## Angle-To-PWM Mapping
 
 `jointAnglesToPwmUs()` uses calibration values from `JOINT_CALIBRATIONS`.
