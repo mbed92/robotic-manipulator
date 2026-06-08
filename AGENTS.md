@@ -50,8 +50,7 @@ When evaluating a problem, work through these questions:
 - `arduino/robot_arm/pca9685_servo_driver.*`: PCA9685 servo driver wrapper.
 - `arduino/robot_arm/robot_calibration.h`: calibration constants and hardware-specific configuration.
 - `pcb/`: KiCad project files and PCB documentation.
-- `.plans/`: working implementation plans and design notes.
-- `TODO.md`: project task notes.
+- `docs/TODO.md`: project task notes.
 
 ## Engineering Guidance
 
@@ -61,7 +60,6 @@ When evaluating a problem, work through these questions:
 - Prefer small, reviewable firmware changes that can be tested incrementally on hardware.
 - Avoid broad rewrites unless there is a concrete correctness, safety, or maintainability reason.
 - Keep generated build artifacts out of the repository unless the project already tracks them intentionally.
-- Use `.plans/` for non-final design notes, migration plans, or multi-step implementation work.
 
 ## Validation
 

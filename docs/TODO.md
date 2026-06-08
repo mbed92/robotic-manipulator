@@ -3,7 +3,7 @@
 ## Accept target commands from an external controller
 
 Current state:
-- The firmware uses a manually edited `const ArmTarget TARGET` in `robot_arm.ino`.
+- The firmware uses a hardcoded `TARGET1`/`TARGET2` sequence in `robot_arm.ino`.
 - Changing the target TCP pose, `J3`, `J4`, or gripper state requires editing and reflashing the Arduino sketch.
 - This is useful for a simple bring-up demo, but it is not a practical control interface.
 
