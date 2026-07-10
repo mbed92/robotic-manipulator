@@ -10,7 +10,7 @@ and I had a lot of fun working on it.
 ## Structure
 
 - [`arduino/robot_arm/robot_arm.ino`](arduino/robot_arm/robot_arm.ino) - main firmware sketch.
-- [`arduino/robot_arm/kinematics.h`](arduino/robot_arm/kinematics.h) / [`kinematics.cpp`](arduino/robot_arm/kinematics.cpp) - forward kinematics, inverse kinematics, and angle-to-PWM conversion.
+- [`arduino/robot_arm/kinematics.h`](arduino/robot_arm/kinematics.h) / [`kinematics.cpp`](arduino/robot_arm/kinematics.cpp) - forward kinematics, Jacobian IK step generation, and angle-to-PWM conversion.
 - [`arduino/robot_arm/robot_calibration.h`](arduino/robot_arm/robot_calibration.h) - servo channels, joint limits, HOME pose, and arm dimensions.
 - [`arduino/robot_arm/pca9685_servo_driver.h`](arduino/robot_arm/pca9685_servo_driver.h) / [`pca9685_servo_driver.cpp`](arduino/robot_arm/pca9685_servo_driver.cpp) - PCA9685 driver wrapper.
 - [`docs/bom.md`](docs/bom.md) - V1 prototype bill of materials.
@@ -78,54 +78,99 @@ In the current model, `L4` and `L5` have the same direction as the final pitch
 
 ## Inverse Kinematics
 
-The firmware uses geometric IK:
+The firmware uses an open-loop Jacobian IK trajectory generator based on the
+commanded joint state:
 
-- `inverseKinematicsPositionYaw()` solves TCP position and yaw while using `J3`
-  from the HOME pose,
-- `inverseKinematicsPositionYawPitch()` solves TCP position and yaw for an
-  explicitly provided `J3`.
+- `computeJacobianIkStep()` is a pure numerical function. It computes one IK
+  step from the current commanded joint angles, target, and configuration. It
+  does not write PWM, wait, or access hardware.
+- `moveToTargetJacobianIk()` in `robot_arm.ino` is the blocking hardware-facing
+  trajectory generator. It calls the step function, checks limits, converts the
+  next angles to PWM, writes the PCA9685 channels, waits until the next control
+  period, and updates the commanded joint state.
+- Before the planar DLS loop, the generator moves the explicitly commanded
+  `J0`, `J3`, and `J4` axes toward their targets with the same fixed period and
+  velocity limits. This gives the local Jacobian solve the intended `J3`
+  geometry instead of starting from the vertical HOME singularity.
 
-IK does not solve the full tool orientation. `J3` is part of the input command,
-and `J4` remains an independent local rotation.
+The IK task is:
 
-The IK model behaves like a `Reacher2D` system after rotating the base to the
-requested yaw. The solution works in a plane:
+- TCP reach,
+- TCP height,
+- base yaw,
+- explicit `J3`,
+- explicit `J4`.
 
-1. `J0` is set to `yaw_rad`.
-2. The requested `J3` changes the effective length and offset of the distal link.
-3. Two elbow configurations are computed for the two-link arm.
-4. Configurations outside the geometry or joint limits are rejected.
-5. If both configurations are valid, the one closer to the HOME pose is selected.
+Only the coupled planar subproblem `[reach, height, J3] <-> [J1, J2, J3]`
+uses damped least squares. `J0` yaw and `J4` are handled as direct proportional
+controllers with the same joint velocity and joint limit handling as the planar
+joints. Task rows have explicit weights so meter and radian errors are scaled
+before the DLS solve.
+
+The solver limits joint velocity by computing a global `alpha` scale. If any
+requested joint velocity exceeds its limit, the whole `q_dot` vector is scaled
+by the smallest required ratio. For example, if a joint requests `3 rad/s` and
+the limit is `2 rad/s`, the whole command is scaled by `2/3`. The current
+default joint velocity limit is `0.5 rad/s` for each kinematic joint.
+
+The default motion configuration uses a `20 ms` control period and allows up to
+`500` iterations per target. With the default period this gives a maximum of
+about `10 s` for one blocking target move before the target is reported as not
+converged.
+
+Joint limits also shrink the global step before failing the motion. A target is
+reported as blocked only when the step scale is effectively exhausted while the
+task error is still too large. The blocking motion loop also detects lack of
+progress so the robot does not spend several seconds making tiny noisy motions
+near an unreachable target.
+
+Damped least squares does not remove physical singularities. Near a singular
+configuration, some TCP directions are still not achievable by the mechanism.
+DLS only prevents the numerical controller from asking for unbounded joint
+velocities.
+
+Because `J3` is an explicit task requirement and also part of the reach/height
+kinematics, it restricts the reachable workspace. Some points that are
+geometrically reachable with free `J3` may not be reachable when a specific
+`J3` value is required.
 
 Possible error statuses include:
 
-- `OutOfReach` - the point is outside the geometric workspace,
-- `JointLimitViolation` - a geometric solution exists, but it exceeds joint limits,
+- `OutOfReach` - the target did not converge within the configured iteration budget,
+- `JointLimitViolation` - the current or computed command violates joint limits,
+- `JointLimitBlocked` - joint limits prevent useful progress toward the target,
+- `NoProgress` - the solver stopped reducing the normalized task error,
 - `InvalidInput` - the input contains invalid values, such as `NaN` or infinity.
 
 ## Control Rules
 
-The current firmware executes a fixed Cartesian target sequence during startup:
+The current firmware executes a fixed pick-and-place demo sequence during
+startup:
 
-1. `TARGET1` and `TARGET2` in `robot_arm.ino` define target `TcpPose` values,
-   explicit `J3`, explicit `J4`, and gripper state.
-2. `setup()` initializes the PCA9685 and first sends all joints to `ZERO`.
-3. After `STEP_DELAY_MS`, the firmware computes and sends `TARGET1`.
-4. After another delay, the firmware computes and sends `TARGET2`.
-5. After another delay, the firmware sends all joints back to `ZERO`.
-6. Once the sequence is complete, `loop()` stays idle.
+1. `TARGET1` through `TARGET11` in `robot_arm.ino` define target `TcpPose`
+   values, explicit `J3`, explicit `J4`, and gripper state.
+2. `setup()` initializes the PCA9685, sends the arm to `ZERO`/HOME, and opens
+   the gripper.
+3. The robot moves through a blocking fixed-period Jacobian IK sequence: ready
+   pose, pick-side yaw, descend, close gripper, lift, carry across a larger
+   base rotation, descend, open gripper, retreat, and return to HOME.
+4. The final HOME return is a normal Jacobian IK target, not a direct
+   all-servo zero command.
+5. Once the sequence is complete, `loop()` stays idle.
 
-There is currently no trajectory planning, velocity ramping, motion
-interpolation, or feedback control loop. Servos receive each target PWM pulse
-width directly, so every new target and every transition in the sequence should
-be tested carefully.
+This is not closed-loop feedback from joint sensors. It is an open-loop
+trajectory generator that assumes the commanded state is a reasonable estimate
+of the servo state. Every new target and transition should still be tested
+carefully on hardware.
 
 ## V1 Limitations
 
 - No closed-loop feedback from joints.
-- No trajectory planner; movement is currently PWM target based.
+- The Jacobian IK trajectory generator is blocking during the fixed demo
+  sequence.
 - IK solves TCP position and base yaw, not full 6D pose.
-- `J3` is an explicit input; `J4` is treated as local wrist rotation.
+- `J3` and `J4` are explicit task inputs; `J3` constrains reachable TCP
+  positions.
 - Calibration is specific to this physical build and should not be copied
   blindly.
 - Servo limits are conservative to avoid mechanical stops.
@@ -173,8 +218,8 @@ Before testing on the manipulator, check:
 - whether the target is within `JOINT_CALIBRATIONS` limits,
 - whether `J3` and `J4` can cause a mechanical collision,
 - whether the gripper PWM values are calibrated correctly,
-- whether the unramped move can hit mechanical stops,
-- whether the servo power supply is sufficient for a sudden move to the target.
+- whether the open-loop IK motion can hit mechanical stops,
+- whether the servo power supply is sufficient for multi-joint motion under load.
 
 The safest test sequence is to compile first, then test without load, and only
 then move with the final tool or object.
